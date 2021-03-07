@@ -1,6 +1,42 @@
+# DEFINED FUNCTIONS ARE:
+# float_inp, num_inp, name_inp, password_inp,
+# ask_next, ask_to_save, generate_password, save_progress
+# retrieve, game_mode
+
 import string
 from datetime import datetime
 from mynum_funcs import float_range
+import random, re, sys, os
+
+def play_on():
+
+    while True:
+        prompt = "\nPress Enter to continue:\n>\t"
+        val = input(prompt)
+
+        acc_range = ''
+        if val.lower() not in acc_range:
+            print(f"\n{val} is not valid!")
+            continue
+
+        break
+
+
+def exit_play():
+
+    while True:
+        prompt = "\nTo exit game, enter 'e'\nType 'c' and press Enter to continue:\nCONTINUE/EXIT PLAY>\t"
+        val = input(prompt)
+        acc_range = ['c', 'continue', 'e', 'exit']
+
+        if val.lower() not in acc_range:
+            print(f"\n{val} is not valid!")
+            continue
+
+        if val.lower() in ['e', 'exit']:
+            return True
+        else:
+            return False
 
 def float_inp(prompt, lim=None, step=None):
     '''
@@ -88,8 +124,9 @@ def password_inp(pwrd_prompt):
 
 def ask_next():
     print("\n\nTo continue, enter 'y'\nTo stop, enter 'n'")
-    prompt = '\nHave another?\n'
+    prompt = '\nHave another?\nYes/No>\t'
     acc_range = ['no', 'n',  'yes', 'y']
+
     while True:
         inp = input(prompt)
 
@@ -97,14 +134,17 @@ def ask_next():
             print("Error: Entry is invalid!")
             continue
 
-        return inp.lower()
+        if inp.lower() in ['yes', 'y']:
+            return True
+        else:
+            return False
 
 
 def ask_to_save():
 
     acc_range = ['save', 's', 'no', 'n']
 
-    prompt = "To save game progress, enter 's'\nTo exit without saving, enter 'n':\n>\t"
+    prompt = "To save game progress, type 's' & press Enter\nTo exit without saving, type 'n' and press Enter:\nSAVE/EXIT>\t"
 
     while True:
         inp = input(prompt)
@@ -117,28 +157,36 @@ def ask_to_save():
             return True
         return False
 
+def generate_password():
+    '''
+    simply generates a random password
+    output is a 7 character long password
+    '''
 
+    SEP1,SEP2 = "*12345", "$67890"
+    LEFT,RIGHT = 'aAbBcCdDeEfF', 'zZlLhHpPmMkK'
+    return f"{random.choice(SEP1)}{random.choice(LEFT)}{random.choice(LEFT)}{random.choice(range(100, 1000))}{random.choice(RIGHT)}{random.choice(RIGHT)}{random.choice(SEP2)}"
 
-def save_details(self):
+def save_progress(file_path, obj):
     '''
     to save game/app records
+    input are file path of text file for saving
+    and class instance/object
     '''
 
-    SEP1, SEP2 = random.choice(['*', '-', '@', '&', '!']), random.choice(['%', '>', '<', '/', '|'])
+    password = generate_password()
 
-    password = random.choice('abcdefgsh')+SEP1+str(random.randint(0,2000))+SEP2+random.choice('zywxvjknmpr')
-
-    hand = open('C:\\Users\\welcome\\Desktop\\SimplePythonChallenges\\RockPaperScissors\\game_data.py', 'a')
+    hand = open(file_path, 'a')
 
     # stored fields include
     # {password: [[username1, games_won, games_lost, games_drawn], [username2, games_won, games_lost, games_drawn]]}
-    info = f"\n{dict( [ (password, [[self.p1['username'], self.p1['games_won'], self.p1['games_lost'], self.p1['draws'] ], [self.p2['username'], self.p2['games_won'], self.p2['games_lost'], self.p2['draws'] ]] )])}"
+    info = f"\n{dict( [ ('password', password), ('obj_data', obj.__dict__ ) ])}"
 
     hand.write(info)
 
     hand.close()
 
-    print(f"\n\nGame saved!\nTo continue as {self.p1['username']} and {self.p2['username']} \nUse this password:\n\n{password}")
+    print(f"\n\nGame saved!\nTo continue use the password below:\n\nPASSWORD>\t{password}")
 
 
 def retrieve(self):
@@ -208,7 +256,7 @@ def game_mode():
     acc_range = ['new', 'n', 'c', 'cont']
     while True:
         # ask to start new or continue saved game
-        prompt = "To start new game, enter 'new'\nTo continue saved game, enter 'cont'\n>\t"
+        prompt = "\n\nTo start new game, enter 'new'\nTo continue saved game, enter 'cont'\nNEW\CONTINUE>\t"
         inp = input(prompt)
 
         if inp[0].lower() not in acc_range:
