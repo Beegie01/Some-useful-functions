@@ -162,6 +162,12 @@ def generate_password():
     simply generates a random password
     returns an output that is 9 characters long
     consisting of digits, alphabets, and symbols
+    
+    EXAMPLE:
+    generate_password() -->
+
+    OUTPUT:
+    '0AB889zZ$'
     '''
 
     SEP1,SEP2 = "0123456789", "*!@#$%&:~"
