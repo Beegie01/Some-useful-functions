@@ -160,10 +160,11 @@ def ask_to_save():
 def generate_password():
     '''
     simply generates a random password
-    output is a 7 character long password
+    returns an output that is 9 characters long
+    consisting of digits, alphabets, and symbols
     '''
 
-    SEP1,SEP2 = "*12345", "$67890"
+    SEP1,SEP2 = "0123456789", "*!@#$%&:~"
     LEFT,RIGHT = 'aAbBcCdDeEfF', 'zZlLhHpPmMkK'
     return f"{random.choice(SEP1)}{random.choice(LEFT)}{random.choice(LEFT)}{random.choice(range(100, 1000))}{random.choice(RIGHT)}{random.choice(RIGHT)}{random.choice(SEP2)}"
 
