@@ -1,6 +1,5 @@
-import string
+import string, sys, os, shutil, re
 
-text = "Is "#this or that, the major (or minor) thing to check? I'd say yes"
 
 def clean_split(text):
     '''
@@ -44,8 +43,6 @@ def clean_split(text):
 
     return word_list
 
-
-text = "Is "#this or that, the major (or minor) thing to check? I'd say yes"
 
 def split(text, sep):
     '''
@@ -131,7 +128,6 @@ def words_count(phrase):
     return fin
 
 
-
 def gen_ALP():
     '''
     generates ascii_uppercase letters
@@ -141,6 +137,7 @@ def gen_ALP():
             continue
         yield string.ascii_letters[n]
 
+
 def gen_alp():
     '''
     generates ascii_lowercase letters
@@ -149,3 +146,20 @@ def gen_alp():
         if string.ascii_letters[n] not in string.ascii_uppercase:
             continue
         yield string.ascii_letters[n]
+
+
+def pull_emails(txt):
+    '''
+    to pull out email addresses from a body of text
+    '''
+    # \S means non-whitespace
+    # + means one or more times
+    # [] means group
+    # \. means escape dot (ie, use dot to mean literally, rather than as a wildcard)
+    pattern = r"[\S]+@[\w]+\.[\w]+"
+
+    # findall function outputs a list of matches
+    # and an empty list if no match was found
+    emails = re.findall(pattern, txt)
+
+    return emails
