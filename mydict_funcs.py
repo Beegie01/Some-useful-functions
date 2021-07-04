@@ -55,3 +55,15 @@ def get_keys(dd, *values):
             if val.lower() == v.lower():
                 found_keys.append(k)
     return found_keys
+
+def del_item(selected_key, dd):
+    '''
+    returns a version of the dictionary
+    without the given key and its value
+    :param selected_key:
+    :param dd:
+    :return: dd (without selected_key,value pair)
+    '''
+    if selected_key in dd.keys():
+        return {k: v for k,v in dd.items() if k != selected_key}
+    print(f"{selected_key} Was Not Found!")

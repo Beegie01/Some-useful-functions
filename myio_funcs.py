@@ -1,24 +1,49 @@
 import os
 
-def file_search(folder_name, search_pattern: str, file_ext: str = None):
+def file_search(folder_name, search_pattern: str=None, file_ext: str=None):
     '''
     returns the full path/location of the file that
     matches the given search pattern and extension
     '''
+    if search_pattern is None and file_ext is None:
+        raise ValueError('No valid argument given for search_pattern and file_ext parameter')
+    
+    if folder_name is None:
+        raise ValueError('Folder_name to serve as starting point for search is not given')
+        
     result = {}
     for dirpath, folders, files in os.walk(folder_name):
 
         for file in files:
-            if file_ext is not None:
+            if file_ext is not None and search_pattern is not None:  # when both file_ext and search_pattern are both known
                 if search_pattern.lower() in file.lower() and file_ext.lower() in file.lower():
                     result.setdefault(file, None)
                     result[file] = f'{dirpath}\\{file}'
-            else:
+            elif file_ext is not None and search_pattern is None:  # when only file_ext is known
+                if file_ext.lower() in file.lower():
+                    result.setdefault(file, None)
+                    result[file] = f'{dirpath}\\{file}'
+            else:  # when only search_pattern is known
                  if search_pattern.lower() in file.lower():
                     result.setdefault(file, None)
                     result[file] = f'{dirpath}\\{file}'
 
     return result
+
+
+def ds_modules_importer():
+    '''
+    import the following data science modules:
+    pandas as pd, numpy as np, seaborn as sns
+    matplotlib.pyplot as plt
+    :return: pd, np, plt, sns
+    '''
+    import pandas as pd, numpy as np
+    import matplotlib.pyplot as plt, seaborn as sns
+    print('\n\nData Science Modules imported!\n'
+          'numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns\n')
+    return pd, np, plt, sns
+
 
 def read_allfile_content(folder_path=None, file_name=None, extn=None):
     '''
