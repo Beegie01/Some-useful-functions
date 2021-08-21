@@ -31,20 +31,6 @@ def file_search(folder_name, search_pattern: str=None, file_ext: str=None):
     return result
 
 
-def ds_modules_importer():
-    '''
-    import the following data science modules:
-    pandas as pd, numpy as np, seaborn as sns
-    matplotlib.pyplot as plt
-    :return: pd, np, plt, sns
-    '''
-    import pandas as pd, numpy as np
-    import matplotlib.pyplot as plt, seaborn as sns
-    print('\n\nData Science Modules imported!\n'
-          'numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns\n')
-    return pd, np, plt, sns
-
-
 def read_allfile_content(folder_path=None, file_name=None, extn=None):
     '''
     copies out the content of a particular file (if file name is specified)
