@@ -1,6 +1,29 @@
 import string, sys, os, shutil, re
 
 
+def error_check() -> str:
+    '''
+    determines what type of error the expression generated
+    '''
+    import re
+
+    while True:
+        try:
+            prompt = 'Please enter your expression: '
+            expr = eval(input(prompt))
+            return 'No Error'
+        except Exception as err:
+            return "This is a {typ}\n{err}".format(
+                typ=''.join([e for e in re.findall(r"\w*", str(type(err))) if 'error' in e.lower()]), err=err)
+
+
+def string_format(name: 'str', age: 'str', gender: 'str'):
+    print('My name is {name}. My gender is {gender} and I am {article} {plural_yr} old.'.format(
+        name=name, article='an' if age[0].lower() in 'aeiou' else 'a',
+        plural_yr=f'{age.strip()} year' if age.lower().strip() == 'one' else f'{age.strip()} years',
+        age=age, gender=gender))
+
+
 def clean_split(text):
     '''
     returns a list of words in a string

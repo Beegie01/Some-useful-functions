@@ -1,34 +1,73 @@
-import os
+import joblib
 
-def file_search(folder_name, search_pattern: str=None, file_ext: str=None):
-    '''
-    returns the full path/location of the file that
-    matches the given search pattern and extension
-    '''
-    if search_pattern is None and file_ext is None:
-        raise ValueError('No valid argument given for search_pattern and file_ext parameter')
+# def file_search(folder_name, search_pattern: str=None, file_ext: str=None):
+#     '''
+#     returns the full path/location of the file that
+#     matches the given search pattern and extension
+#     '''
+#     if search_pattern is None and file_ext is None:
+#         raise ValueError('No valid argument given for search_pattern and file_ext parameter')
+#
+#     if folder_name is None:
+#         raise ValueError('Folder_name to serve as starting point for search is not given')
+#
+#     result = {}
+#     for dirpath, folders, files in os.walk(folder_name):
+#
+#         for file in files:
+#             if search_pattern is not None and file_ext is not None:  # when both params, file_ext and search_pattern, are given
+#                 if search_pattern.lower() in file.lower() and f".{file_ext.lower().strip('.')}" in file.lower():
+#                     result.setdefault(file, None)
+#                     result[file] = f'{dirpath}\\{file}'
+#             elif file_ext is not None and search_pattern is None:  # when only param, file_ext, is given
+#                 if f".{file_ext.lower().strip('.')}" in file.lower():
+#                     result.setdefault(file, None)
+#                     result[file] = f'{dirpath}\\{file}'
+#             else:  # when only param, search_pattern, is given
+#                  if search_pattern.lower() in file.lower():
+#                     result.setdefault(file, None)
+#                     result[file] = f'{dirpath}\\{file}'
+#
+#     return result
     
-    if folder_name is None:
-        raise ValueError('Folder_name to serve as starting point for search is not given')
-        
-    result = {}
-    for dirpath, folders, files in os.walk(folder_name):
-
+def file_search(search_from: 'path_like_str'=None, search_pattern_in_name: str=None, search_file_type: str=None, print_result: bool=False):
+    """
+    returns a str containing the full path/location of all the file(s)
+    matching the given search pattern and file type
+    """
+    
+    # raise error when invalid arguments are given
+    if (search_from is None):
+        raise ValueError('Please enter a valid search path')
+    if (search_pattern_in_name is None) and (search_file_type is None):
+        raise ValueError('Please enter a valid search pattern and/or file type')
+    
+    search_result = {}
+    print(f"Starting search from: {search_from}\n")
+    for fpath, folders, files in joblib.os.walk(search_from):
         for file in files:
-            if file_ext is not None and search_pattern is not None:  # when both file_ext and search_pattern are both known
-                if search_pattern.lower() in file.lower() and file_ext.lower() in file.lower():
-                    result.setdefault(file, None)
-                    result[file] = f'{dirpath}\\{file}'
-            elif file_ext is not None and search_pattern is None:  # when only file_ext is known
-                if file_ext.lower() in file.lower():
-                    result.setdefault(file, None)
-                    result[file] = f'{dirpath}\\{file}'
-            else:  # when only search_pattern is known
-                 if search_pattern.lower() in file.lower():
-                    result.setdefault(file, None)
-                    result[file] = f'{dirpath}\\{file}'
+            # when both search pattern and file type are entered
+            if (search_file_type is not None) and (search_pattern_in_name is not None):
+                if (search_file_type.split('.')[-1].lower() in file.lower().split('.')[-1]) and \
+                        (search_pattern_in_name.lower() in file.lower().split('.')[0]):
+                    search_result.setdefault(file, f'{fpath}\\{file}')
 
-    return result
+            # when file type is entered without any search pattern
+            elif (search_pattern_in_name is None) and (search_file_type is not None):
+                # print(search_file_type)
+                if search_file_type.split('.')[-1].lower() in file.lower().split('.')[-1]:
+                    search_result.setdefault(file, f'{fpath}\\{file}')    
+
+            # when search pattern is entered without any file type
+            elif (search_file_type is None) and (search_pattern_in_name is not None):
+                if search_pattern_in_name.lower() in file.lower().split('.')[0]:
+                    search_result.setdefault(file, f'{fpath}\\{file}')
+                    
+    if print_result:
+        for k,v in search_result.items():
+            print(f"{k.split('.')[0]} is at {v}")
+            
+    return search_result
 
 
 def read_allfile_content(folder_path=None, file_name=None, extn=None):

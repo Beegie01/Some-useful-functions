@@ -1,5 +1,61 @@
 from collections import defaultdict, OrderedDict
 
+def two_list_merger(list1, list2):
+    "'takes each elements of two lists and merges them sequentially'"
+
+    longer = max(len(list1), len(list2))
+    container = []
+    #tuple for lists of equal number of elements
+    if len(list1) == len(list2):
+        for num in range(len(list1)):
+            container.append((list1[num], list2[num]))
+
+    else:
+        if len(list1) == longer:
+            for ind,val in enumerate(list1):
+                container.append(val)
+                for ind2,val2 in enumerate(list2):
+                    if ind == ind2:
+                        container.append(val2)
+        else:
+            for ind,val in enumerate(list2):
+                container.append(val)
+                for ind2,val2 in enumerate(list1):
+                    if ind == ind2:
+                        container.append(val2)
+
+
+    print(container)
+
+    return container
+
+def sorter(num_list):
+    '''
+    returns a sorted a list of given numbers
+    '''
+
+    sorter = []
+
+    while len(num_list) != 0:
+        # assume smallest number is the first element on list
+        min_num = num_list[0]
+        dd = {}
+
+        for ind, num in enumerate(num_list):
+
+            if min_num < num:
+                continue
+            # when current num is smaller than or equal to the previous minimum number
+            # the index of the current number is recorded
+            dd['index'] = ind
+
+        # after the smallest number and its index has been recorded
+        # delete the minimum number from list
+        # and look for the new minimum number
+        sorter.append(num_list.pop(dd['index']))
+    return sorter
+
+
 def index_iters(dd):
     '''
     to convert a list or list of lists into a dictionary
@@ -108,7 +164,7 @@ def word_lengths(L):
     return list(map(len, L))
 
 
-def word_lengths(phrase):
+def w_length(phrase):
 
     word_list = phrase.split()
     counter = []
@@ -116,6 +172,7 @@ def word_lengths(phrase):
     for w in word_list:
         counter.append(len(w))
     return counter
+
 
 def filter_words(word_list, letter):
     '''
@@ -148,7 +205,8 @@ def containing_letter(word_list, letter):
             lst.append(word)
     return lst
 
-def d_list(L):
+
+def ind_list(L):
     '''
     returns a dict of list elements as keys
     and index as values
@@ -167,7 +225,8 @@ def d_list(L):
 
     return dd
 
-def d_list(L):
+
+def list_ind(L):
     '''
     using dict comprehension
     '''
@@ -209,7 +268,6 @@ def count_ele(*args):
                     dd[ele] += 1
     except TypeError:
         return len(lst)
-
 
     return dd
 
