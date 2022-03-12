@@ -1,5 +1,32 @@
 import joblib
+from seaborn.utils import pd, np, plt, os
+import seaborn as sns
+from sklearn import metrics as mtr, tree, ensemble, model_selection as ms, preprocessing as prep
+from tensorflow.keras import backend as K, callbacks, layers, models
 
+
+def unzip_a_file(filename: str, extract_dir=None, file_password=None):
+    """Extract files in a .7z or .zip archive"""
+    
+    import zipfile
+    import py7zr
+    import os
+    
+    if extract_dir is None:
+        extract_dir = os.getcwd()
+    
+    # when file is .zip file
+    if zipfile.is_zipfile(filename):
+        with open(filename, mode='rb') as f:
+            zipfile.ZipFile(f).extractall(path=extract_dir)
+    
+    # when file is .7z file
+    elif py7zr.is_7zfile(filename):
+        py7zr.SevenZipFile(filename, password=file_password).extractall(path=extract_dir)
+        
+    print('Operation Complete.')
+    
+    
 # def file_search(folder_name, search_pattern: str=None, file_ext: str=None):
 #     '''
 #     returns the full path/location of the file that
@@ -44,7 +71,7 @@ def file_search(search_from: 'path_like_str'=None, search_pattern_in_name: str=N
     
     search_result = {}
     print(f"Starting search from: {search_from}\n")
-    for fpath, folders, files in joblib.os.walk(search_from):
+    for fpath, folders, files in os.walk(search_from):
         for file in files:
             # when both search pattern and file type are entered
             if (search_file_type is not None) and (search_pattern_in_name is not None):
@@ -70,6 +97,35 @@ def file_search(search_from: 'path_like_str'=None, search_pattern_in_name: str=N
     return search_result
 
 
+def file_search_many(search_from: 'path_like_str' = None,
+                 search_pattern_in_names: 'list_or_tuple' = None,
+                 search_file_types: 'str_or_list' = None,
+                 print_result: bool = False):
+    
+    if not isinstance(search_pattern_in_names, (tuple, list)):
+        raise TypeError("search_pattern_in_names must be a tuple or list")
+    if not isinstance(search_file_types, (str, list, tuple)):
+        raise TypeError("search_file_types must be a str or list")
+                        
+    result = dict()
+    dtypes_len = len(search_file_types)
+                        
+    if isinstance(search_file_types, list):
+        if dtypes_len == 1:
+            search_file_types = search_file_types[0]
+        elif (dtypes_len > 1) and (dtypes_len != len(search_pattern_in_names)):
+            raise ValueError("search_file_types must have same length with search_pattern_in_names")
+                        
+    if isinstance(search_file_types, str):                    
+        for i in range(len(search_pattern_in_names)):
+            result.update(file_search(search_from, search_pattern_in_names[i], search_file_types, print_result))
+        return result
+                        
+    for i in range(len(search_pattern_in_names)):
+        result.update(file_search(search_from, search_pattern_in_names[i], search_file_types[i], print_result))
+    return result
+    
+    
 def read_allfile_content(folder_path=None, file_name=None, extn=None):
     '''
     copies out the content of a particular file (if file name is specified)

@@ -6,14 +6,31 @@ import seaborn as sns
 import datetime
 import os
 import copy
-from sklearn import metrics as s_mtr, tree, ensemble, cluster
+from sklearn import metrics as s_mtr, tree, ensemble, cluster, decomposition as sdec, feature_extraction as sfe
 
-# alternatively: from seaborn.utils import np, pd, plt, os
+# alternatively: from seaborn.utils import np, pd, plt, os    
+    
 
+def check_correlations(df, title):
+    """plot correlation heatmap from dataframe"""
+    fig = plt.figure(figsize=(18, 8), dpi=200)
+    ax = sns.heatmap(np.round(df.corr(), 2), annot_kws={'fontsize':6},
+                     annot=True, 
+                     square=True,)
+                     
+    plt.title(title, weight='bold', x=0.5, y=1.05)
+    
+    ax.set_xticklabels(ax.get_xticklabels(), size=6)
+    ax.set_yticklabels(ax.get_yticklabels(), size=6)
+    
+    return fig
+    
 
 def K_search(X, k_max=3):
     """SSD is the sum of squared distance of 
-    each data point from its closest cluster center."""
+    each data point from its closest cluster center.
+    Returns
+    dataframe: a report"""
     
     result = {"K": [],
              "SSD": []}
@@ -39,14 +56,6 @@ def check_multi_colinearity(df, x_colnames: list, y_col):
     x = pd.DataFrame(df[x_colnames])
     
     return x.corrwith(y_col)
-    
-
-def fig_writer(fname: str, plotter: plt.figure=None, dpi: int=200, file_type='png'):
-    """save an image of the given figure plot in the filesystem."""
-    
-    plotter.get_figure().savefig(fname, dpi=dpi, format=file_type,
-                                     bbox_inches='tight', pad_inches=0.25)
-    return fname
 
 
 def calc_days_between(historic_date: str, later_date: str):
@@ -59,39 +68,6 @@ def calc_days_between(historic_date: str, later_date: str):
     historic_date, later_date = np.datetime64(historic_date), np.datetime64(later_date)
     
     return (later_date - historic_date).astype(int)
-    
-
-def build_autoencoder(n_features, encoder_dim):
-    """build a standard autoencoder network, where
-    input and output layers have same number
-    of units.
-    
-    Returns:
-    autoencoder, encoder, decoder
-    
-    output dimension is defined by number of units,
-    and input dimension by n_features arg.
-    encoder layer is the first hidden layer.
-    decoder layer is the output layer.
-    autoencoder is simply the stacking of both
-    encoder and decoder layers."""
-    
-    K.clear_session()
-    
-    encoder = models.Sequential(name='Encoder')
-    encoder.add(layers.Dense(units=encoder_dim, input_shape=[n_features], activation='relu'))
-    
-    decoder = models.Sequential(name='Decoder')
-    decoder.add(layers.Dense(units=n_features, input_shape=[encoder_dim], activation='relu'))
-    
-    autoencoder = models.Sequential([encoder, decoder])
-    
-    autoencoder.compile(optimizer=optimizers.SGD(learning_rate=1.5),
-                       loss='binary_crossentropy')
-    
-    autoencoder.summary()
-    
-    return autoencoder, encoder, decoder
 
 
 def visualize_binaryclf_report(trained_model, test_input, test_label, is_ANN=False, ANN_cutoff=0.5):
@@ -131,34 +107,6 @@ def cast_appropriate_dtypes(df):
                 result[cols[i]] = df[cols[i]]
     
     return result
-    
-
-def build_nn(inp_shape, 
-                olayer_units=1,
-                olayer_activation='sigmoid', 
-                hlayer_activation='relu', 
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics='accuracy'):
-    """build an ANN"""
-    hl_units = np.array(inp_shape).flatten()[0] + 16
-    backend.clear_session()
-
-    model = models.Sequential()    
-    model.add(layers.Dense(hl_units, activation=hlayer_activation, input_shape=inp_shape))
-    model.add(layers.Dropout(0.2))
-    model.add(layers.Dense(hl_units, activation=hlayer_activation))
-    model.add(layers.Dropout(0.2))
-    model.add(layers.Dense(hl_units, activation=hlayer_activation))
-
-    model.add(layers.Dense(olayer_units, activation=olayer_activation))
-    
-    model.compile(optimizer=optimizer, 
-              loss=loss, 
-              metrics=metrics)
-    
-    model.summary()
-    return model
 
 
 def complete_rules(freq_A, freq_B, freq_AB, Total):
@@ -465,6 +413,9 @@ def impute_null_values(df: 'pd.DataFrame', pivot_cols: list, target_col: str, wi
     :return: impute_guide: 'a pandas dataframe'
     """
     
+    if ('object' in str(df[target_col].dtypes)) or ('bool' in str(df[target_col].dtypes)):
+        with_mean = False
+        
     def pivot_mode(df: 'pd.DataFrame', pivot_cols: list, target_col: str):
         """rank the occurrences of target_col values based on pivot_cols,
         and return only the mode (i.e highest occurring) target_col
@@ -485,14 +436,27 @@ def impute_null_values(df: 'pd.DataFrame', pivot_cols: list, target_col: str, wi
         and return only the highest occurring target_col value per combination
         of pivot_cols.
         """
+        
         if not isinstance(df, pd.DataFrame):
             raise TypeError("Object given is not a pandas dataframe")
         if not isinstance(pivot_cols, list):
             raise TypeError("pivot columns should be in list")
         if not isinstance(target_col, str):
             raise TypeError("Target column name must be a string")
-
-        freq_df = df.loc[df[target_col].notnull(), pivot_cols + [target_col]].groupby(by=pivot_cols).mean().reset_index()
+        
+        dec_places = 4
+        targ_dtype = str(df[target_col].dtypes)
+        
+        if ('int' in targ_dtype):
+            dec_places = 0
+            targ_dtype = str(df[target_col].dtypes)[:-2]
+            
+        elif ('float' in targ_dtype):    
+            sample = str(df.loc[df[target_col].notnull(), target_col].iloc[0])
+            dec_places = len(sample.split('.')[-1])
+            targ_dtype = str(df[target_col].dtypes)[:-2]
+        
+        freq_df = np.round(df.loc[df[target_col].notnull(), pivot_cols + [target_col]].groupby(by=pivot_cols).mean().reset_index(), dec_places)
         return freq_df.drop_duplicates(subset=pivot_cols)
 
     if with_mean:
@@ -732,34 +696,6 @@ def train_test_RMSE(deg_lim: int, X: 'array-like', y: 'array-like'):
         train_rmse.setdefault(n, tr_rmse), test_rmse.setdefault(n, te_rmse)
 
     return train_rmse, test_rmse
-
-
-def plot_graph(X_ax: 'array-like', y_ax:'array-like', fig_loc: str, size: tuple=[6, 3], clarity: int=150, ncols=2, plot_type: tuple=['line', 'scatter']):
-    '''
-    plot a graph for X against y
-    consisting of num_sections of sections
-    along with corresponding plots
-    returns figure storage location - fig_loc
-
-    NOTE: length of plot_type and number of columns must match
-    return: fig_loc
-    '''
-    import matplotlib.pyplot as plt, seaborn as sns
-
-    fig = plt.figure(figsize=size, dpi=clarity)
-
-    # create a dict of section: plot_type
-    sects, x = {}, 0
-    for j in range(ncols):
-        w = 0.6
-        axis = fig.add_axes([x, 0, w, 1])
-        x += 0.2 + w
-        plotter = f"sns.{plot_type[j]}plot(x=X_ax, y=y_ax, ax=axis)"
-        eval(plotter)
-
-    fig.savefig(fname=fig_loc, bbox_inches='tight')
-
-    return fig_loc
 
 
 def ds_modules_importer():

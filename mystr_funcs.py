@@ -1,6 +1,17 @@
 import string, sys, os, shutil, re
 
 
+def text_cleaner(text_body: str):
+    
+    import string
+    # from nltk import corpus
+    from sklearn import feature_extraction as sfe
+    
+    nopunc = [char for char in text_body if char not in string.punctuation]
+    nopunc = ''.join(nopunc)
+    
+    return [word for word in nopunc.split() if word.lower() not in sfe.text.ENGLISH_STOP_WORDS]
+
 def error_check() -> str:
     '''
     determines what type of error the expression generated
