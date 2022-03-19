@@ -10,20 +10,164 @@ from sklearn import metrics as s_mtr, tree, ensemble, cluster, decomposition as 
 
 # alternatively: from seaborn.utils import np, pd, plt, os    
     
+    
+def index_generator(sample_size: 'array', n_index=1):
+    """Randomly generate n indexes.
+    :Return: random_indexes"""
+    
+    import random
+    
+    def select_from_array(sample_array, n_select=1):
+        return random.choices(population=sample_array, k=n_select)
+    
+    indexes = range(0, sample_size, 1)
+    
+    return select_from_array(indexes, n_index)
+    
+    
+def report_a_significance(X1_set, X2_set, n_deg_freedom=1, X1_name='X1', X2_name='X2'):
+    """Test for statistical significant difference between X1_set and X2_set
+    at 99% and 95% Confidence.
+    X1_set: 1D array of observations
+    X2_set: 1D array of observations."""
+    
+    def get_min_denom(n1, n2):
+        return min([n1, n2])
+    
+    def detect_unequal_sizes(n1, n2):
+        """check if both lengths are not the same"""
+        return n1 != n2
+    
+    def calc_deg_freedom(denom, n_deg):
+        return denom - n_deg
+    
+    def compute_mean_std(arr, denom, n_deg):
+        total = np.sum(arr)
+        avg = np.round(total/denom, 4)
+        deg_freedom = calc_deg_freedom(denom, n_deg)
+        sumsq = np.sum((arr - avg)**2)
+        stdv = np.sqrt(sumsq/deg_freedom).round(4)
+        return (total, avg, stdv)
+    
+    def compute_pstd(stdv_1, stdv_2):
+        return round(np.sum([stdv_1**2, stdv_2**2])**0.5, 4)
+    
+    def compute_test(pooled_stdv, at_alpha=0.05):
+        sig_to_conf = {0.05: (2, '95% confidence'),
+                      0.01: (3, '99% confidence')}
+        test_sigma = round(sig_to_conf[at_alpha][0] * pooled_stdv, 4)
+        return (sig_to_conf[at_alpha][1], test_sigma)
+    
+    def index_generator(sample_size: 'array', n_index=1):
+        """Randomly generate n indexes.
+        :Return: random_indexes"""
 
-def check_correlations(df, title):
-    """plot correlation heatmap from dataframe"""
-    fig = plt.figure(figsize=(18, 8), dpi=200)
-    ax = sns.heatmap(np.round(df.corr(), 2), annot_kws={'fontsize':6},
-                     annot=True, 
-                     square=True,)
-                     
-    plt.title(title, weight='bold', x=0.5, y=1.05)
+        import random
+
+        def select_from_array(sample_array, n_select=1):
+            return random.choices(population=sample_array, k=n_select)
+
+        indexes = range(0, sample_size, 1)
+
+        return select_from_array(indexes, n_index)
+        
     
-    ax.set_xticklabels(ax.get_xticklabels(), size=6)
-    ax.set_yticklabels(ax.get_yticklabels(), size=6)
+    X1_size, X2_size = len(X1_set), len(X2_set)
+    samp_sizes = {X1_name: X1_set, 
+                  X2_name: X2_set}
+    print(f'ORIGINAL SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
+          f'{X2_name}: {X2_size}\n\n')
     
-    return fig
+    # check if sample sizes are unequal
+    if detect_unequal_sizes(X1_size, X2_size):
+        print("Unequal Sample Sizes Detected!!")
+        min_size = get_min_denom(X1_size, X2_size)
+        max_samp_name = [name for name, val in samp_sizes.items() if len(val) != min_size][0]
+        # downsampling: 
+        # randomly generate min_size indexes for max_samp_name
+        rand_indexes = index_generator(len(samp_sizes[max_samp_name]), min_size)
+        # select only random min_size indexes for max_samp_name set
+        samp_sizes[max_samp_name] = samp_sizes[max_samp_name].iloc[rand_indexes]
+        X1_size, X2_size = len(samp_sizes[X1_name]), len(samp_sizes[X2_name])
+        print(f'ADJUSTED SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
+              f'{X2_name}: {X2_size}\n\n')
+
+    total_X1, X1_mean, X1_std = compute_mean_std(samp_sizes[X1_name], X1_size, n_deg_freedom)
+    total_X2, X2_mean, X2_std = compute_mean_std(samp_sizes[X2_name], X2_size, n_deg_freedom)
+    
+    null_hypo = np.round(X1_mean - X2_mean, 4)
+    pooled_std = compute_pstd(X1_std, X2_std)
+
+    print(f'{X1_name}:\n Total = {total_X1}\n Average = {X1_mean}\n Standard deviation = {X1_std}\n\n' +
+          f'{X2_name}:\n Total = {total_X2}\n Average = {X2_mean}\n Standard deviation = {X2_std}\n\n' +
+          f'MEAN DIFFERENCE = {null_hypo}\n' +
+          f'POOLED STD = {pooled_std}\n\n')
+    
+    print(f'HYPOTHESIS TEST:\nIs {X1_mean} significantly HIGHER THAN {X2_mean}?\n' +
+         f'BASED ON the chosen level of significance\nIs the difference {null_hypo} > 0?\n')
+
+    # check for both 99% and 95% confidence level
+    # Meaning, is the difference between both figures greater than 
+    # 3 pooled std and 2 pooled std respectively
+
+    alpha = 0.01
+    test_result = compute_test(pooled_std, alpha)
+    if null_hypo > test_result[1]:
+        return print(f'At {test_result[0]}, REJECT the null hypothesis!\n {null_hypo} is greater than {test_result[1]}\n')
+    else:
+        test_result = compute_test(pooled_std)
+        if null_hypo > test_result[1]:
+            return print(f'At {test_result[0]}, REJECT the null hypothesis!\n{null_hypo} is greater than {test_result[1]}\n')
+    print(f'Do NOT reject the null hypothesis\n{null_hypo} is less than or equal to {test_result[1]}')
+    
+    
+def report_stat_significance(X1_set, X2_set, denominator: int=None, X1_name='X1', X2_name='X2'):
+    """Test for statistical significant difference between X1_set and X2_set
+    at 99% and 95% Confidence.
+    X1_set: 1D array of observations
+    X2_set: 1D array of observations
+    common_denominator: denominator used to compute the mean and degrees of freedom,
+    if common_denominator is None, maximum sample size is used"""
+    
+    if not denominator:
+        denominator = max([len(X1_set), len(X2_set)])
+    
+    print(f'Sample size: {denominator}\n\n')
+
+    total_X1 = X1_set.sum()
+    total_X2 = X2_set.sum()
+    deg_freedom = denominator - 1
+    X1_mean = round(total_X1/denominator, 4)
+    X2_mean = round(total_X2/denominator, 4)
+    sumsq_X1 = np.sum((X1_set - X1_mean)**2)
+    sumsq_X2 = np.sum((X2_set - X2_mean)**2)
+    X1_std, X2_std = np.sqrt(sumsq_X1/deg_freedom).round(4), np.sqrt(sumsq_X2/deg_freedom).round(4)
+    #print(X1_std, X2_std)
+
+    pooled_std = round(sum([X2_std**2, X1_std**2])**0.5, 4)
+    H0 = round(X1_mean - X2_mean, 4)
+
+    print(f'{X1_name}:\n Total = {total_X1}\n Average = {X1_mean}\n Standard deviation = {X1_std}\n\n' +
+          f'{X2_name}:\n Total = {total_X2}\n Average = {X2_mean}\n Standard deviation = {X2_std}\n\n' +
+          f'Pooled standard deviation {X1_name} and {X2_name} = {pooled_std}\n\n')
+    print(f'HYPOTHESIS TEST:\nIs {X1_mean} significantly HIGHER THAN {X2_mean}?\n' +
+         f'BASED ON the chosen level of significance\nIs the difference {H0} > 0?\n')
+    
+    # check for both 99% and 95% confidence level
+    # Meaning, is the difference between both figures greater than 
+    # 3 pooled std and 2 pooled std respectively
+
+    alpha = 0.01
+    three_std = round(3*pooled_std, 4)
+    print(f'At confidence level of {100 *(1-alpha): .2f}%:\n' +
+          f'Is {H0} greater than {three_std}?\n' +
+          f'Answer: {H0 > three_std}\n')
+
+    alpha = 0.05
+    two_std = round(2*pooled_std, 4)
+    print(f'At confidence level of {100 *(1-alpha): .2f}%:\n' +
+          f'Is {H0} greater than {two_std}?\n' +
+          f'Answer: {H0 > two_std}')
     
 
 def K_search(X, k_max=3):
@@ -44,18 +188,26 @@ def K_search(X, k_max=3):
     return pd.DataFrame(result)
     
 
-def check_multi_colinearity(df, x_colnames: list, y_col):
-    """check for multi-colinearity among features in a dataframe"""
+def get_correlations(df: pd.DataFrame, y_col: 'str or Series', x_colnames: list=None):
+    """get for %correlations between df features and y_col.
+    And return absolute values of correlations.
+    Return: xy_corrwith (sorted absolute values)"""
     
+    if not isinstance(df, (pd.Series, pd.DataFrame)):
+        raise ValueError("df must be either a dataframe or series")
+        
     if not isinstance(y_col, (str, pd.Series)):
         raise ValueError("y_col must be either str or series")
         
     if isinstance(y_col, str):
         y_col = df[y_col]
-        
-    x = pd.DataFrame(df[x_colnames])
     
-    return x.corrwith(y_col)
+    if x_colnames:    
+        x = pd.DataFrame(df[x_colnames])
+    else:
+        x = df
+    
+    return x.corrwith(y_col).abs().sort_values(ascending=False).apply(lambda x: 100*x).round(2)
 
 
 def calc_days_between(historic_date: str, later_date: str):
@@ -307,23 +459,38 @@ def gen_word_freq_from_docs(filenames: 'str_or_array', add_bias: int=0, report_a
     return final_output
     
 
-def classification_metrics(y_true, y_pred, for_both_classes=False):
+def classification_metrics(y_true, y_pred, target_label=1, for_both_classes=False):
     """Calculate the accuracy, precision, and recall, f1_score values
     considering the expected values and predicted values.
     if for_both_classes is True, return each performance metric 
     for class 0 and 1, otherwise return for only class 1
+    target_label is label of focus
     Returns
     performance metrics dict"""
+    
     result = dict()
     using = 'binary'
     if for_both_classes:
         using = None
-    result['recall'] = np.round(s_mtr.recall_score(y_true, y_pred, average=using), 4)
-    result['precision'] = np.round(s_mtr.precision_score(y_true, y_pred, average=using), 4)
-    result['f1_score'] = np.round(s_mtr.f1_score(y_true, y_pred, average=using), 4)
+    result['recall'] = np.round(s_mtr.recall_score(y_true, y_pred, pos_label=target_label, average=using), 4)
+    result['precision'] = np.round(s_mtr.precision_score(y_true, y_pred, pos_label=target_label, average=using), 4)
+    result['f1_score'] = np.round(s_mtr.f1_score(y_true, y_pred, pos_label=target_label, average=using), 4)
     result['accuracy'] = np.round(s_mtr.accuracy_score(y_true, y_pred), 4)
     
     return result
+    
+    
+def report_and_conf_matrix(y_true, pred):
+    """print classification report and return the corresponding
+    confusion matrix.
+    Return: confusion_matrix_plot"""
+    
+    print(s_mtr.classification_report(y_true, pred))
+    
+    sns.set_style('white')
+    ax1 = s_mtr.ConfusionMatrixDisplay.from_predictions(y_true, pred)
+    plt.title("Confusion Matrix", weight='bold')
+    return ax1
     
 
 def tree_feat_weights(model, col_names):

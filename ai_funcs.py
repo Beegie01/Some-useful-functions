@@ -21,6 +21,28 @@ def text_cleaner(text_body: str, remove_stop_words=False):
         return [word for word in nopunc.split() if word.lower() not in sfex.text.ENGLISH_STOP_WORDS]
     return nopunc
     
+    
+def update_vocab(old_vocab: dict, new_sentences: list):
+    """update a BOW vocabulary with new terms from new_sentences
+    old_vocab: old bow vocabulary
+    new_sentences: list of new sentences (str)
+    Return: updated_dict"""
+    
+    def check_keys(old_vocab, token):
+        return str.lower(token) in old_vocab.keys()
+    
+    cvect = sfex.text.CountVectorizer(ngram_range=(1, 3)).fit(new_sentences)
+    new_vocab = cvect.vocabulary_
+    vocab = dict(old_vocab)
+    last_count = max(old_vocab.values())
+    for w in new_vocab.keys():
+        if check_keys(old_vocab, w):
+            continue
+        last_count += 1
+        vocab[w] = last_count
+    return vocab
+    
+    
 
 def get_part_of_speech(sentence: str):
     """get root words of words in a sentence.
