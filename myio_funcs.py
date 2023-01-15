@@ -4,6 +4,13 @@ import os
 
 class IoUtils:
     
+    @staticmethod
+    def view_image_file(fname: str):
+        from PIL import Image
+        
+        img_obj = Image.open(fname)
+        Image._show(img_obj)
+        print(f'{fname} now on display')
 
     @staticmethod
     def unzip_a_file(filename: str, extract_dir=None, file_password=None):
@@ -15,15 +22,18 @@ class IoUtils:
         
         if extract_dir is None:
             extract_dir = os.getcwd()
-        
+        print(f'Source: {filename}\nDestination: {extract_dir}')
+
         # when file is .zip file
         if zipfile.is_zipfile(filename):
             with open(filename, mode='rb') as f:
                 zipfile.ZipFile(f).extractall(path=extract_dir)
-        
+                print('.zip file unzipped')
+
         # when file is .7z file
         elif py7zr.is_7zfile(filename):
             py7zr.SevenZipFile(filename, password=file_password).extractall(path=extract_dir)
+            print('.7z file unzipped')
             
         print('Operation Complete.')
         

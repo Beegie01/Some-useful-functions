@@ -1,18 +1,720 @@
-import joblib
+import pickle
+import os
+import copy
+from itertools import combinations
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import datetime
-import os
-import copy
-from sklearn import metrics as s_mtr, tree, ensemble, cluster, decomposition as sdec, feature_extraction as sfe, preprocessing as s_prep, feature_selection as sfs
+import random
+from sklearn import metrics as s_mtr, tree, ensemble, cluster, decomposition as s_dec, feature_extraction as s_fex
+from sklearn import preprocessing as s_prep, feature_selection as s_fs, utils as s_utils
+from scipy import stats
+from scipy.stats import ttest_ind_from_stats, ttest_ind
+import statsmodels as stat
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+from mlxtend import frequent_patterns
 
 
 class DsUtils:
 
-    # alternatively: from seaborn.utils import np, pd, plt, os    
 
+    @staticmethod
+    def get_correlcoeff_with_pvalues(X, y, show_pval_thresh=1):
+        """compute pearson's correlation coefficient (and pvalues) between
+        X variables and y
+        Return
+        result_df: if y is 1D, dataframe containing pearson coefficient (r) and pvalues
+        else, dictionary containing y categories as keys and their r and pvalues for each
+        variable"""
+        
+        
+        def get_pearsonr_pval(X, y):
+            """compute pearson's correlation coefficient (and pvalues) between
+            X variables and y
+            Return
+            result_df: dataframe containing pearson coefficient (r) and pvalues"""
+            r_dict, pval_dict = dict(), dict()
+
+            X = pd.DataFrame(X)
+            cols = X.columns
+
+            for x in cols:
+                r, pval = stats.pearsonr(X[x], y)
+                r_dict[f'{x}'] = r
+                pval_dict[f'{x}'] = pval
+            return pd.DataFrame([pd.Series(r_dict,name='r'),
+                                   pd.Series(pval_dict, name='pval')]).T.sort_values(by='pval')
+        
+        if (len(y.shape) > 1) and (y.shape[-1] > 1):
+            y_dum = pd.get_dummies(pd.DataFrame(y))
+        
+            y_catg = dict()
+            for y_col in y_dum:
+                y = y_dum[y_col]
+                result = get_pearsonr_pval(X, y)
+                y_catg[f'{y_col}'] = result.loc[result['pval'] < show_pval_thresh]
+            
+            return y_catg
+        
+        result = get_pearsonr_pval(X, y)
+        return result.loc[result['pval'] < show_pval_thresh]
+        
+        return get_pearsonr_pval(X, y)
+
+    @staticmethod
+    def get_unique_combinations(unq_elements: 'array of unique elements', n_combo_elements):
+        """create combination of unique elements where each combination is n_combo_elements"""
+        
+        return [c  for c in combinations(list(unq_elements), n_combo_elements)]
+
+    @staticmethod
+    def compute_median_std_sterr(arr, group_name='group', precision=2):
+        """compute median, standard deviation and standard error for arr
+        Return:
+        result_df: dataframe reporting median, std_from_median, and sterror"""
+        
+        grp_mdn = pd.Series(np.median(arr).round(precision), name=f'{group_name}_median')
+        
+        # standard deviation from median
+        dev = arr - arr.median()
+        sq_dev = dev**2
+        sumsq_dev = sq_dev.sum()
+        deg_freedom = len(arr) -1
+        variance = sumsq_dev/deg_freedom
+        mdn_std = variance**0.5
+        grp_std = pd.Series(np.round(mdn_std, precision), name=f'{group_name}_std')
+        
+        # standard error from median
+        mdn_sterr = np.round(mdn_std/len(arr)**0.5, precision)
+        grp_sterr = pd.Series(mdn_sterr, name=f'{group_name}_sterr')
+
+        return pd.concat([grp_mdn, grp_std, grp_sterr], axis=1)
+
+    @staticmethod
+    def compute_mean_std_sterr(arr, group_name='group', precision=2):
+        """compute mean, standard deviation and standard error for arr
+        Return:
+        result_df: dataframe reporting mean, std, and sterror"""
+        
+        grp_avg = pd.Series(np.mean(arr).round(precision), name=f'{group_name}_avg')
+        grp_std = pd.Series(np.std(arr, ddof=1).round(precision), name=f'{group_name}_std')
+        grp_sterr = pd.Series(np.round(np.std(arr, ddof=1)/np.sqrt(len(arr)), precision), 
+                              name=f'{group_name}_sterr')
+        
+        return pd.concat([grp_avg, grp_std, grp_sterr], axis=1)
+
+    @staticmethod
+    def run_glm_predictor(X, y, binary_class=True, precision=2):
+        """run a generalised linear model (logisitic regression) on the relationship between
+        the dataframe's x_cols and y_col
+        Return 
+        model_summary: glm model summary object"""
+        
+        def generate_formula(X, y):
+            """generate formula in string format"""
+            cols, formula = X.columns, ""
+            for n in range(len(cols)):
+                if n == 0:
+                    formula += cols[n]
+                    continue
+                formula += f"+{cols[n]}"
+            return f"{y.name} ~ {formula}"
+        
+        # normalise X
+        scaler = s_prep.MinMaxScaler()
+        scx = scaler.fit_transform(X)
+        scX = pd.DataFrame(scx, columns=X.columns)
+        Xc = sm.add_constant(scX)
+        
+        # create dataframe comprising only normalised X and y
+        rlike_df = pd.merge(Xc, y, left_index=True, right_index=True)
+        
+        # create formula string consisting of dependent variable and independent variables
+        formula = generate_formula(scX, y)
+        
+        # run glm model
+        if binary_class:
+            model = smf.glm(formula=formula, data=rlike_df, family=sm.families.Binomial())
+            tmodel = model.fit()
+        else:
+            model = smf.mnlogit(formula=formula, data=rlike_df, )#optimizer='powell')#, family=sm.families.Poisson())
+#             model = smf.glm(formula=formula, data=rlike_df)
+#             model = stat.discrete.discrete_model.MultinomialModel(endog=y, exog=Xc)
+#             model = sm.MNLogit(endog=y, exog=Xc)
+
+            tmodel = model.fit_regularized()
+        
+        print(f'Dependent Variable:\n{model.endog_names}, \n\nPValues:\n{tmodel.pvalues}, \n\nCoefficients:\n{tmodel.params}')
+        return tmodel
+    
+    @staticmethod
+    def combine_multiple_columns(df, *multi_cols:str, output_name='combo_variable'):
+        """collapse multiple columns into one column"""
+        
+        def collapsed(row, mult_vars):
+            result = ""
+            for i in range(len(mult_vars)):
+                if i == 0:
+                    result += f"{row[mult_vars[i]]}"
+                else:
+                    result += f"_{row[mult_vars[i]]}"
+            return result
+        
+        if not multi_cols:
+            multi_cols = df.columns
+        multi_cols = list(multi_cols)
+        collapsed_var = pd.Series(df.apply(lambda row: collapsed(row, multi_cols), axis=1),
+                                  name=output_name)
+        return pd.concat([collapsed_var, df.drop(multi_cols, axis=1)], axis=1)
+    
+    @staticmethod
+    def convert_multilevel_columns_to_single(df, uniq_id):
+        """convert a multi-level column dataframe to a single-level dataframe"""
+        
+        new_colnames = [f"{c1}_{c2}" if c1.lower() != uniq_id.lower() else c1 for c1, c2 in df.columns]
+        new_df = df.droplevel(level=1, axis=1)
+        new_df.columns = new_colnames
+        return new_df
+    
+    @staticmethod
+    def convert_rows_to_columns(df, unique_identifier:str, shared_identifier:str, var_prefix:str=None, output_multi_lvl=False):
+            """generate columns from row values per unique_identifier
+            unique_identifier: primary identifier column
+            shared_identifier: its unique values will each form a new header"""
+            
+            cls = DsUtils()
+            unq = df[shared_identifier].unique()
+            col_rename = {u: f"{var_prefix}_{u}" if var_prefix else u for u in unq}
+            # print(col_rename)
+            new_df = pd.DataFrame.pivot(df, index=unique_identifier, columns=shared_identifier).reset_index().rename(columns=col_rename)
+            if output_multi_lvl:
+                return new_df
+            return cls.convert_multilevel_columns_to_single(new_df, unique_identifier)
+
+    @staticmethod
+    def convert_rows_to_columns(df, primary_index_col:str, secondary_index_col:str, target_col:str, var_prefix:str):
+        """generate columns from row values per primary_index_col
+        primary_index_col: primary identifier column
+        secondary_index_col: its unique values will each form a new header
+        target_col: determines the values in each of the new header"""
+        
+        cols = [primary_index_col, secondary_index_col, target_col]
+        unq = df[secondary_index_col].unique()
+        col_rename = {u: f"{var_prefix}_{u}" for u in unq}
+        return pd.DataFrame.pivot(df[cols], index=primary_index_col, columns=secondary_index_col, values=target_col).reset_index().rename(columns=col_rename)
+        
+    @staticmethod
+    def convert_column_to_row(df, primary_id:str, combo_column_name:str, value_name:str):
+        """generate rows from columns"""
+        
+        return pd.DataFrame.melt(df, id_vars=primary_id, var_name=combo_column_name, value_name=value_name)
+    
+    @staticmethod
+    def save_python_obj(fname, py_obj):
+        """save python object to file system.
+        NOTE: always add .pkl to fname"""
+        
+        with open(fname, 'wb') as f:
+            pickle.dump(txt, f)
+        print("Python object has been saved")
+        
+    @staticmethod
+    def load_python_obj(fname):
+        """"""
+        with open(fname, 'rb') as f:
+            txt = pickle.load(f)
+        print('Loading complete')
+
+    @staticmethod
+    def run_apriori(df, use_cols=None, use_colnames=True, min_support=0.5):
+        
+        sel_cols = df.select_dtypes(exclude='number')
+        if use_cols:
+            sel_cols = sel_cols[use_cols]
+            
+        result = frequent_patterns.apriori(pd.get_dummies(sel_cols),
+                                       use_colnames=use_colnames, min_support=min_support)
+        result['num_sets'] = result['itemsets'].apply(lambda x: len(x))
+        return result.sort_values('support', ascending=False)
+        
+    @staticmethod
+    def replace_value_with(df, replacement_guide:dict=None, colnames:list=None):
+        """replace all occurrences of old value (key) in colnames with new value (value).
+            if colnames is None, replace all occurrences of old value across entire
+            df with new value.
+            Return 
+            new_df: dataframe with new values in place of old values"""
+
+        def replace_value(df, old_value, new_value, colnames=None):
+            """replace all occurrences of old value in colnames with new value.
+            if colnames is None, replace all occurrences of old value across entire
+            df with new value.
+            Return 
+            new_df: dataframe with new values in place of old values"""
+
+            if not colnames:
+                cols = tuple(df.columns)
+            else:
+                cols = tuple(colnames)
+
+            new_df = pd.DataFrame(df)
+
+            for c in cols:
+                new_df[c] = new_df[c].apply(lambda x: new_value if x == old_value else  x)
+            return new_df
+        
+        for i, (old_val, new_val) in enumerate(replacement_guide.items()):
+            if i == 0:
+                new_df = replace_value(df, old_val, new_val, colnames)
+                continue
+            new_df = replace_value(new_df, old_val, new_val, colnames)
+        return new_df
+    
+    @staticmethod
+    def count_occurrences(df, count_colname:str =None, output_name='total_count', attach_to_df=False):
+        """count occurrences per unique count_colname or unique combined categs"""
+        
+        if not count_colname:
+            freq = df.value_counts().reset_index()
+        else:
+            freq = df.groupby(count_colname).size().reset_index()
+        freq = freq.rename(columns={0:output_name})
+        if attach_to_df and count_colname:
+            return pd.merge(freq, df, on=count_colname)
+        return freq
+    
+    @staticmethod
+    def give_percentage(arr, perc_total=None, precision=2):
+        """output the percentage of each element in array
+        arr: dataframe or series
+        perc_total: total for calculating percentage of each value
+        if perc_total is None, len(arr) is used instead
+        Return
+        perc_arr"""
+        
+        if not perc_total:
+            return np.round(100*arr/len(arr), precision)
+        return np.round(100*arr/perc_total, precision)
+        
+    @staticmethod
+    def percentage_per_row(df, grouper_col:str=None, precision=2):
+        """compute percentage per row of each unique grouper_col value
+        Return
+        result: df in percentage"""
+        
+        if grouper_col:
+            new_df = df.set_index(grouper_col)
+        else:
+            new_df = df
+        denom = new_df.sum(axis=1)
+        return np.round(100 * new_df.div(denom, axis=0), precision)
+        
+    @staticmethod
+    def get_subset_percentage(df, freq_col:str, sum_by_col:str, precision=2):
+        """compute percentage per group of each unique sum_by_col value
+        Return
+        result: df including percentage"""
+        
+        # create aggregate sum for percentage
+        cols = [sum_by_col, freq_col]
+        summed = df[cols].groupby(cols[0]).sum().rename(columns={freq_col:'summed'}).reset_index()
+        
+        #attach aggregate value to each row
+        new_df = pd.merge(df, summed, on=cols[0])
+        new_df.loc[:, f'%{freq_col}'] = 100 * new_df.apply(lambda row: row[freq_col] / row['summed'], axis=1).round(precision)
+        return new_df.drop('summed', axis=1)
+        
+    @staticmethod
+    def compare_variables(var1, var2, var1_name=None, var2_name=None, where_equal=True):
+        """compare two variables and return where equal/unequal (if True/False)
+        Return
+        result: dataframe where series are equal/unequal"""
+        
+        if not var1_name:
+            var1_name = var1.name
+        if not var2_name:
+            var2_name = var2.name
+            
+        df = pd.concat([pd.Series(var1, name=var1_name),
+                        pd.Series(var2, name=var2_name)], axis=1)
+        cond = (var1 == var2).astype(int)
+        if where_equal:
+            return df.loc[cond == 1]
+        return df.loc[cond == 0]
+    
+    @staticmethod
+    def generate_interval_labels(min_val, max_val, n_groups=5, bin_width=None, precision=2):
+        """generate labels from lower and upper bounds of interval values.
+        NOTE: categories/n_labels = num_intervals - 1
+        Return
+        label_dict: dictionary containing integer index: label"""
+        
+        def push_boundary(upper_lim, interval):
+            """to make sure that the upper boundary is included"""
+            
+            remainder = upper_lim%interval
+            if remainder != 0:
+                return (interval - remainder) + upper_lim
+            return upper_lim
+        
+        if not bin_width:
+            num_range = np.round(np.linspace(min_val, max_val+0.1, n_groups-1), precision)
+        else:
+            if max_val < 0:  # upper boundary is a negative value
+                pmax = -1*push_boundary(np.abs(max_val), bin_width) + (bin_width/10)
+                num_range = np.arange(start=min_val, stop=pmax, step=bin_width)
+            elif min_val < 0:  # lower boundary is a negative value
+                # include negative lower boundary
+                nmax = push_boundary(np.abs(min_val), bin_width) + (bin_width/10)
+                # negative range of values, excluding the first value (-0)
+                nmax_range = -np.arange(start=0, stop=nmax, step=bin_width)[1:]
+                # include positive upper boundary
+                pmax = push_boundary(max_val, bin_width) + (bin_width/10)
+                # positive range of values
+                pmax_range = np.arange(start=0, stop=pmax, step=bin_width)
+                # merge negative and positive range of values
+                num_range = np.sort(np.append(nmax_range, pmax_range))
+            
+        return {i:f'[{num_range[i-1]} to {num_range[i]})' for i in range(len(num_range)) if i > 0}
+
+    @staticmethod
+    def get_interval_freq(continuous_ser, n_groups=5, bin_width=None, precision=2, output_colnames=None):
+            """generate interval frequencies for a continuous series.
+            NOTE: categories/n_labels = num_intervals - 1
+            Return
+            bmi_change_interval: dataframe containing (intervals_as_int, intervals_as_str)"""
+            
+            cls = DsUtils()
+            def classify_val(val:'number', interval_guide:dict):
+                for ix, invls in interval_guide.items():
+                    lower_bound , upper_bound = float(invls.split()[0][1:]), float(invls.split()[-1][:-1])
+                    if (val >= lower_bound and val < upper_bound):
+                        return ix 
+            
+            x = pd.Series(continuous_ser)
+            min_val, max_val = np.percentile(x, [0, 100])
+            labes_dict = cls.generate_interval_labels(min_val, max_val, n_groups, bin_width, precision)
+            invl_ix = x.apply(lambda x: classify_val(x, labes_dict))
+            invl_labe = invl_ix.map(labes_dict)
+            if not output_colnames:
+                output_colnames = ['bmi_diff_class', 'bmi_diff_band']
+            return pd.concat([invl_ix, invl_labe], axis=1, keys=output_colnames)
+    
+    @staticmethod
+    def equalize_categories(left, right, grouper_colname:str, freq_colname:str):
+        """include zero frequencies for missing categories between two dfs:
+        Return
+        result: keys are (left, right) containing df with 0 in place of missing categories"""
+        
+        def merge_categories(catg1: 'pd.Series', catg2: 'pd.Series'):
+            """create a common list of categories"""
+            
+            unq1, unq2 = list(catg1.unique()), list(catg2.unique())
+            merg = pd.Series(sorted(set(unq1 + unq2)))
+            return merg
+        
+        result = dict()
+        common_categs = merge_categories(left[grouper_colname], right[grouper_colname])
+        common_categs.name = grouper_colname
+        common_categs = pd.DataFrame(common_categs)
+        result['left'] = pd.merge(common_categs, left, on=grouper_colname, how='left')
+        result['left'][freq_colname] = result['left'][freq_colname].fillna(int(0))
+        result['right'] = pd.merge(common_categs, right, on=grouper_colname, how='left')
+        result['right'][freq_colname] = result['right'][freq_colname].fillna(int(0))
+        return result
+    
+    @staticmethod
+    def get_from_df(df, col1, col1_is, col2=None, col2_is=None, col3=None, col3_is=None):
+        """return filtered view of dataframe"""
+        
+        def show_with_one_cond(df, col1, col1_is):
+            """return filtered view of dataframe"""
+            if df is None:
+                if isinstance(col1, pd.Series):
+                    if isinstance(col1_is, (tuple, list)):
+                        cond = (col1.isin(col1_is))
+                    else:
+                        cond = (col1 == col1_is)
+                return col1.loc[cond]
+            if isinstance(col1_is, (tuple, list)):
+                cond = (df[col1].isin(col1_is))
+            else:
+                cond = (df[col1] == col1_is)
+            return df.loc[cond]
+
+        def show_with_two_cond(df, col1, col1_is, col2, col2_is):
+            """return filtered view of dataframe"""
+            
+            result = show_with_one_cond(df, col1, col1_is)
+            if isinstance(col2_is, (tuple, list)):
+                cond = (result[col2].isin(col2_is))
+            else:
+                cond = (result[col2] == col2_is)
+            return result.loc[cond]
+
+        def show_with_three_cond(df, col1, col1_is, col2, col2_is, col3, col3_is):
+            """return filtered view of dataframe"""
+            
+            result = show_with_two_cond(df, col1, col1_is, col2, col2_is)
+            if isinstance(col3_is, (tuple, list)):
+                cond = (result[col3].isin(col3_is))
+            else:
+                cond = (result[col3] == col3_is)
+            return result.loc[cond]
+        
+        if col2 is not None and col2_is is not None:
+            
+            if col3 is not None and col3_is is not None:
+                return show_with_three_cond(df, col1, col1_is, col2, col2_is, col3, col3_is)
+            
+            return show_with_two_cond(df, col1, col1_is, col2, col2_is)
+        
+        return show_with_one_cond(df, col1, col1_is)
+            
+    @staticmethod
+    def generate_multi_index_from_df(df, sort_by_col_num=0):
+        """generate a multi-level index series from dataframe unque categories"""
+        
+        return pd.MultiIndex.from_frame(df, sortorder=sort_by_col_num)
+        
+    @staticmethod
+    def get_interval_freq(continuous_ser, n_groups=5, precision=2, output_colnames=None):
+        """generate interval frequencies for a continuous series.
+        NOTE: categories/n_labels = num_intervals - 1
+        Return
+        bmi_change_interval: dataframe containing (intervals_as_int, intervals_as_str)"""
+        
+        def classify_val(val, interval_guide):
+            for ix, invls in interval_guide.items():
+                lower_bound , upper_bound = float(invls.split()[0][1:]), float(invls.split()[-1][:-1])
+                if (val >= lower_bound and val < upper_bound):
+                    return ix 
+        
+        x = pd.Series(continuous_ser)
+        min_val, max_val = np.percentile(x, [0, 100])
+        labes_dict = cls.generate_interval_labels(min_val, max_val, n_groups, precision)
+        invl_ix = x.apply(lambda x: classify_val(x, labes_dict))
+        invl_labe = invl_ix.map(labes_dict)
+        return pd.concat([invl_ix, invl_labe], axis=1, keys=output_colnames)
+    
+    @staticmethod
+    def generate_interval_labels(min_val, max_val, n_groups=5, bin_width=None, precision=2):
+        """generate labels from lower and upper bounds of interval values.
+        NOTE: categories/n_labels = num_intervals - 1
+        Return
+        label_dict: dictionary containing integer index: label"""
+        
+        def push_boundary(upper_lim, interval):
+            """to make sure that the upper boundary is included"""
+            
+            remainder = upper_lim%interval
+            if remainder != 0:
+                return (interval - remainder) + upper_lim
+            return upper_lim
+        
+        num_range = np.round(np.linspace(min_val, max_val+0.1, n_groups-1), precision)
+        
+        if bin_width:
+            if max_val < 0:  # upper boundary is a negative value
+                pmax = -1*push_boundary(np.abs(max_val), bin_width) + (bin_width/10)
+                num_range = np.arange(start=min_val, stop=pmax, step=bin_width)
+            elif min_val < 0:  # lower boundary is a negative value
+                # include negative lower boundary
+                nmax = push_boundary(np.abs(min_val), bin_width) + (bin_width/10)
+                # negative range of values, excluding the first value (-0)
+                nmax_range = -np.arange(start=0, stop=nmax, step=bin_width)[1:]
+                # include positive upper boundary
+                pmax = push_boundary(max_val, bin_width) + (bin_width/10)
+                # positive range of values
+                pmax_range = np.arange(start=0, stop=pmax, step=bin_width)
+                # merge negative and positive range of values
+                num_range = np.sort(np.append(nmax_range, pmax_range))
+                
+            else:
+                num_range = np.round(np.arange(min_val, max_val+0.1, bin_width), precision)
+            
+        return {i:f'[{num_range[i-1]} to {num_range[i]})' for i in range(1, len(num_range))}
+
+    @staticmethod
+    def rank_top_occurrences(df, ranking_col=None, top_n=3, min_count_allowed=1):
+        """rank top n occurrences per given ranking column"""
+        
+        if not ranking_col:
+            ranking_col = list(df.columns)[0]
+        counts = df.value_counts().sort_values(ascending=False).reset_index()
+        counts = counts.groupby(ranking_col).head(top_n)
+        counts = counts.rename(columns={0:'total_count'})
+        if min_count_allowed:
+            counts = counts.loc[counts['total_count'] >= min_count_allowed]
+        return counts.sort_values('total_count', ascending=False).reset_index(drop=True)
+        
+    @staticmethod
+    def create_label_from_ranking(df, exclude_last_col=True):
+    
+        if 'total_count' in df.columns:
+            df = df.drop('total_count', axis=1)
+        ranking_cols = list(df.columns)
+        if exclude_last_col:
+            ranking_cols = list(df.iloc[:, :-1].columns)
+        labe, n_cols = [], len(ranking_cols)
+        for i in range(len(df)):
+            row_labe = ''
+            for j in range(len(ranking_cols)):
+                if j == n_cols - 1:
+                    row_labe += f"{ranking_cols[j]}: {df.iloc[i, j]}"
+                    continue
+                row_labe += f"{ranking_cols[j]}: {df.iloc[i, j]} &\n"
+                
+            labe.append(row_labe)
+        return pd.Series(labe, name='combined_variables', index=df.index)
+
+    @staticmethod
+    def generate_aggregated_lookup(df, using_cols: list=None):
+        """generate a lookup table using a subset of variables
+        comprising a total accident count per category.
+        Return:
+        freq_lookup_df"""
+        
+        if not using_cols:
+            using_cols = ('month', 'week_num', 'day_of_week', 'day_name', 'hour', 'day_num')
+                                                     
+        aggregate_df = df[using_cols].value_counts().sort_index().reset_index()
+        aggregate_df.columns = aggregate_df.columns.astype(str).str.replace('0', 'total_count')
+        return aggregate_df
+
+    @staticmethod
+    def get_correl_with_threshold(df: pd.DataFrame, thresh: float=0.5, report_only_colnames=False):
+        """select only variables with correlation equal to or above the threshold value.
+        Return:
+        df_corr"""
+        
+        def count_thresh_corrs(row, thresh):
+            """to count how many values in each row >= thresh"""
+            
+            count = 0
+            for val in row:
+                if abs(val) >= abs(thresh):
+                    count += 1
+            return count
+        
+        df = pd.DataFrame(df)
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError('df must be a dataframe')
+            
+        print(f'Features with correlation of {round(100*thresh, 2)}% and above:\n')
+        # number of values >= threshold value per row
+        all_corrs = df.corr().round(4)
+        selected_corr = all_corrs.apply(lambda val: count_thresh_corrs(val, thresh))
+        correlated_vars = selected_corr[selected_corr > 1]
+        if report_only_colnames:
+            return list(correlated_vars.index)
+        return all_corrs.loc[all_corrs.index.isin(list(correlated_vars.index)), list(correlated_vars.index)]
+    
+    @staticmethod
+    def get_columns_with_pattern(df, search_pattern:'str or list', find_exact_match=False):
+        """select from dataframe all columns containing the search pattern(s)."""
+        
+        if isinstance(search_pattern, str): # when search pattern is str
+            if not find_exact_match:
+                cols = [c for c in df.columns if str.lower(search_pattern) in c.lower()]
+            else:
+                cols = [c for c in df.columns if str.lower(search_pattern) == c.lower()]
+        elif isinstance(search_pattern, list): # when list of search pattern is given
+            cols = list()
+            for c in df.columns:
+                for search_for in search_pattern:
+                    if not find_exact_match and str(search_for).lower() in c.lower():
+                        cols.append(c)
+                    elif find_exact_match and (str(search_for).lower() == c.lower()):
+                        cols.append(c)
+        return df[cols]
+    
+    @staticmethod
+    def get_percentage(arr: pd.Series):
+        """output the percentage of each element in array"""
+        
+        ser = pd.Series(arr)
+        return np.round(100*ser/ser.sum(), 2)
+        
+    @staticmethod
+    def percentage_per_class(df, freq_colname:str, catg_colname:str, precision=2):
+        """compute percentage of freq_colname per catg_colname's category"""
+        
+        cols = [catg_colname, freq_colname]
+        denom = df[cols].groupby(cols[0]).sum().rename(columns={cols[-1]:'denom'})
+        calc = pd.merge(df[cols], denom, on=cols[0])
+    #     display(calc)
+        return pd.concat([df, np.round(calc.apply(lambda row: row[freq_colname]/row['denom'], axis=1), precision)],
+                         axis=1).rename(columns={0:'perc'}).drop(freq_colname, axis=1)
+        
+    @staticmethod
+    def median_absolute_deviation(x: 'array'):
+      """compute the median absolute deviation.
+      Return:
+      MAD: integer"""
+
+      return np.median(np.abs(x - np.median(x)))
+    
+    @staticmethod
+    def hampel_filtering(timeseries: pd.Series, window_flank: int=5, n: int=3):
+      """determine the median absolute deviation (MAD) outlier
+      in timeseries data.
+      :param timeseries: a pandas Series object containing time series data.
+      :param window_flank: total window size will be 2*window_flank + 1
+      :param n: threshold value with default 3 (Pearson's rule).
+      Return:
+      timeseries: corrected timeseries"""
+      
+      cls = DsUtils()
+      
+      if not isinstance(timeseries, pd.Series):
+        raise TypeError('timeseries must be a pandas series object')
+      
+      if not isinstance(window_flank, int):
+        raise TypeError('window_flank must be an integer')
+      elif window_flank <= 0:
+        raise ValueError('window_flank must be a positive number')
+      
+      if not isinstance(n, int):
+        raise TypeError('n must be an integer')
+      elif window_flank <= 0:
+        raise ValueError('n must be a positive number')
+
+      k = 1.4826
+      ts_cleaned = timeseries.copy()
+
+      ts_rolling = ts_cleaned.rolling(window=window_flank*2, center=True)
+      ts_rolling_median = ts_rolling.median().fillna(method='bfill').fillna(method='ffill')
+      ts_rolling_sigma = k*ts_rolling.apply(cls.median_absolute_deviation).fillna(method='bfill').fillna(method='ffill')
+
+      outlier_indices = list(
+            np.array(np.where(np.abs(ts_cleaned - ts_rolling_median) >= (n * ts_rolling_sigma))).flatten())
+      ts_cleaned[outlier_indices] = ts_rolling_median[outlier_indices]
+
+      return ts_cleaned
+      
+      def make_cols_lowercase(df):
+        """convert column names to lowercase.
+        Return: list of df columns in lowercase."""
+        
+        return list(map(str.lower, list(df.columns)))
+        
+    @staticmethod
+    def placeholder_to_nan(df, current_nan_char: str=-1, new_placeholder=np.nan):
+        """convert placeholders values to np.nan
+        Return:
+        df: dataframe with placeholder replaced by -1."""
+        
+        col_names = df.columns
+        df2 = copy.deepcopy(df)
+        for col in col_names:
+    #         print(col)
+            df2.loc[df2[col] == current_nan_char, col] = new_placeholder
+        return df2
+    
     @staticmethod
     def cast_categs_to_int(ser: pd.Series):
         """cast categories to integers
@@ -38,7 +740,7 @@ class DsUtils:
         guide = {'str': 'object', 'int': 'number', 'float': 'number', 'date': 'datetime', 'time': 'datetime'}
         if feat_datatype in guide:
             use_datatype = guide[feat_datatype]
-            print(use_datatype)
+            #print(use_datatype)
             cols_selected = df.select_dtypes(include=use_datatype)
         else:
             cols_selected = df.select_dtypes(include=feat_datatype)
@@ -49,9 +751,76 @@ class DsUtils:
             print(feat_datatype)
             col_dtypes = cols_selected.dtypes.astype(str).str.lower()
             return list(col_dtypes[col_dtypes.str.contains(feat_datatype)].index)
-        print('yes')
+        #print('yes')
         return list(cols_selected.columns)
-        
+    
+    @staticmethod
+    def get_ttest_pvalue_from_array(X1_set, X2_set, 
+                                alternative_hypothesis='two-sided', precision=None):
+            """compute tstatistics and pvalue of two arrays X1 and X2.
+            alternative_hypothesis: {'two-sided', 'less', 'greater'}
+            Return
+            result_dict: {'t_statistic':t, 'pvalue':p}"""
+            
+            def check_equal_var(var1, var2):
+                """determine whether to use student (equal variance) 
+                or Welch (unequal variance) t-test.
+                equal variance = (larger variance/smaller variance < 4) or (larger std/smaller std < 2)
+                unequal variance = (larger var/smaller var >= 4)"""
+                
+                top, bot = max([var1, var2]), min([var1, var2])
+                return ((top+1)/(bot+1)) < (4+1) # add 1 to cancel out ZeroDiv
+            
+            var1, var2 = np.var(X1_set, ddof=1), np.var(X2_set, ddof=1)
+
+            if len(np.shape(X1_set)) > 1: # multiple features
+                ev = [check_equal_var(ix1, ix2) for ix1, ix2 in zip(var1, var2)]
+            else:
+                ev = check_equal_var(var1, var2)
+                if ev:
+                    print("\nEqual Variance Detected! -> Student T-Test\n")
+                else:
+                    print("\nUnequal Variance Detected! -> Welch Test:\n")
+            if not precision:
+                t, p = ttest_ind(X1_set, X2_set, equal_var=ev, alternative=alternative_hypothesis)
+            else:
+                t, p = np.round(ttest_ind(X1_set, X2_set, equal_var=ev, 
+                                          alternative=alternative_hypothesis), precision)
+            return {'t_statistic':t, 'pvalue':p}
+
+    @staticmethod
+    def get_ttest_pvalue_from_stats(X1_mean, X1_std, X1_count, X2_mean, X2_std, X2_count,
+                                    alternative_hypothesis='two-sided', precision=None):
+            """compute tstatistics and pvalue of two arrays X1 and X2 from the mean,
+            std, and sample size.
+            alternative_hypothesis: {'two-sided', 'less', 'greater'}
+            Return
+            result_dict: {'t_statistic':t, 'pvalue':p}"""
+            
+            def check_equal_var(var1, var2):
+                """determine whether to use student (equal variance) 
+                or Welch (unequal variance) t-test.
+                equal variance = (larger variance/smaller variance < 4) or (larger std/smaller std < 2)
+                unequal variance = (larger var/smaller var >= 4)"""
+                
+                top, bot = max([var1, var2]), min([var1, var2])
+                return (top/bot) < 4
+            
+            ev = check_equal_var(X1_std, X2_std)
+            if ev:
+                print("\nEqual Variance Detected! -> Student T-Test\n")
+            else:
+                print("\nUnequal Variance Detected! -> Welch Test:\n")
+            if not precision:
+                t, p = ttest_ind_from_stats(mean1=X1_mean, std1=X1_std, nobs1=X1_count,
+                                            mean2=X2_mean, std2=X2_std, nobs2=X2_count,
+                                            equal_var=ev, alternative=alternative_hypothesis)
+            else:
+                t, p = np.round(ttest_ind_from_stats(mean1=X1_mean, std1=X1_std, nobs1=X1_count,
+                                            mean2=X2_mean, std2=X2_std, nobs2=X2_count,
+                                            equal_var=ev, alternative=alternative_hypothesis), altprecision)
+            return {'t_statistic':t, 'pvalue':p}
+       
     @staticmethod
     def remove_val_ind(X, y, predictors: list=None, remove_val=np.nan):
         """remove indexes where there is a remove_val character"""
@@ -67,13 +836,46 @@ class DsUtils:
         return X_new, y_new
     
     @staticmethod
-    def report_a_significance(X1_set, X2_set, n_deg_freedom=1, X1_name='X1', X2_name='X2'):
+    def test_hypotheses(selected_data, agg_cols=None, focus_col=None, bigger_set_name='X1', smaller_set_name='X2',
+                        bigger_set_vals=None, smaller_set_vals=None, second_condition_col=None, second_condition_val=None,
+                        third_condition_col=None, third_condition_val=None, balance_unequal=True):
+        """run hypothesis test on selected data for focus_col's bigger_set_name > focus_col's smaller_set_name"""
+        
+        cls = DsUtils()
+        if not agg_cols:
+            agg_cols = ['hour']
+        a_cols = [str.lower(c) for c in agg_cols if c != 'total_count']
+        agg_df = cls.generate_aggregated_lookup(selected_data, include_cols=a_cols)
+        x_cols = a_cols + ['total_count']
+        display(x_cols)
+        # total df
+        total_acc = agg_df[x_cols].groupby(a_cols).sum().reset_index()
+        display(total_acc)
+        bigger_set = cls.get_from_df(total_acc, col1=focus_col, col1_is=bigger_set_vals, 
+                                             col2=second_condition_col, col2_is=second_condition_val,
+                                            col3=third_condition_col, col3_is=third_condition_val)
+        print(f"{bigger_set_name}:")
+
+        display(bigger_set)
+        smaller_set = cls.get_from_df(total_acc, col1=focus_col, col1_is=smaller_set_vals,
+                                             col2=second_condition_col, col2_is=second_condition_val,
+                                            col3=third_condition_col, col3_is=third_condition_val)
+        print("\n>\n")
+        print(f"{smaller_set_name}:")
+        display(smaller_set)
+        
+        cls.report_a_significance(bigger_set['total_count'], smaller_set['total_count'],
+                                   X1_name=bigger_set_name, X2_name=smaller_set_name,
+                                  balance=balance_unequal)
+        
+    @staticmethod
+    def report_a_significance(X1_set, X2_set, n_deg_freedom=1, X1_name='X1', X2_name='X2', seed=None, balance=True):
         """Test for statistical significant difference between X1_set and X2_set
         at 99% and 95% Confidence.
         X1_set: 1D array of observations
         X2_set: 1D array of observations."""
         
-        cls = DS_utils()
+        cls = DsUtils()
         
         def get_min_denom(n1, n2):
             return min([n1, n2])
@@ -81,30 +883,43 @@ class DsUtils:
         def detect_unequal_sizes(n1, n2):
             """check if both lengths are not the same"""
             return n1 != n2
-
         
-        X1_size, X2_size = len(X1_set), len(X2_set)
-        samp_sizes = {X1_name: X1_set, 
-                      X2_name: X2_set}
-        print(f'ORIGINAL SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
-              f'{X2_name}: {X2_size}\n\n')
+        # to ensure reproducibility
+        if not seed:
+            seed = 1
+        np.random.seed(seed)
         
-        # check if sample sizes are unequal
-        if detect_unequal_sizes(X1_size, X2_size):
-            print("Unequal Sample Sizes Detected!!")
-            min_size = get_min_denom(X1_size, X2_size)
-            max_samp_name = [name for name, val in samp_sizes.items() if len(val) != min_size][0]
-            # downsampling: 
-            # randomly generate min_size indexes for max_samp_name
-            rand_indexes = cls.index_generator(len(samp_sizes[max_samp_name]), min_size)
-            # select only random min_size indexes for max_samp_name set
-            samp_sizes[max_samp_name] = samp_sizes[max_samp_name].iloc[rand_indexes]
-            X1_size, X2_size = len(samp_sizes[X1_name]), len(samp_sizes[X2_name])
-            print(f'ADJUSTED SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
+        samp_sizes = {X1_name: pd.Series(X1_set), 
+                      X2_name: pd.Series(X2_set)}
+        
+        print(f'\n\nHYPOTHESIS TEST FOR:\n{X1_name} > {X2_name}\n')
+        
+        # use to compare single values
+        if len(samp_sizes[X1_name]) == 1:
+            total_X1, X1_mean, X1_std = samp_sizes[X1_name].iloc[0], samp_sizes[X1_name].iloc[0], samp_sizes[X1_name].iloc[0]**0.5
+            total_X2, X2_mean, X2_std = samp_sizes[X2_name].iloc[0], samp_sizes[X2_name].iloc[0], samp_sizes[X2_name].iloc[0]**0.5
+        else:
+            X1_size, X2_size = len(X1_set), len(X2_set)
+            print(f'ORIGINAL SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
                   f'{X2_name}: {X2_size}\n\n')
-
-        total_X1, X1_mean, X1_std = cls.compute_mean_std(samp_sizes[X1_name], X1_size, n_deg_freedom)
-        total_X2, X2_mean, X2_std = cls.compute_mean_std(samp_sizes[X2_name], X2_size, n_deg_freedom)
+            
+            # check if sample sizes are unequal
+            if detect_unequal_sizes(X1_size, X2_size):
+                print("Unequal Sample Sizes Detected!!\n")
+                if balance:
+                    print("\n....DOWNSAMPLING RANDOMLY....\n")
+                    min_size = get_min_denom(X1_size, X2_size)
+                    max_samp_name = [name for name, val in samp_sizes.items() if len(val) != min_size][0]
+                    # downsampling: 
+                    # randomly generate min_size indexes for max_samp_name
+                    rand_indexes = cls.index_generator(len(samp_sizes[max_samp_name]), min_size, random_state=seed)
+                    # select only random min_size indexes for max_samp_name set
+                    samp_sizes[max_samp_name] = samp_sizes[max_samp_name].iloc[rand_indexes]
+                    X1_size, X2_size = len(samp_sizes[X1_name]), len(samp_sizes[X2_name])
+                    print(f'ADJUSTED SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
+                          f'{X2_name}: {X2_size}\n\n')
+            total_X1, X1_mean, X1_std = cls.compute_mean_std(samp_sizes[X1_name], X1_size, n_deg_freedom)
+            total_X2, X2_mean, X2_std = cls.compute_mean_std(samp_sizes[X2_name], X2_size, n_deg_freedom)
         
         null_hypo = np.round(X1_mean - X2_mean, 4)
         pooled_std = cls.compute_pstd(X1_std, X2_std)
@@ -142,7 +957,7 @@ class DsUtils:
         """compute sum, mean, stdev of array using 
         the given denominator and degrees of freedom"""
         
-        cls = DS_utils()
+        cls = DsUtils()
         
         total = np.sum(arr)
         avg = np.round(total/denom, 4)
@@ -170,19 +985,92 @@ class DsUtils:
         return (sig_to_conf[at_alpha][1], test_sigma)
     
     @staticmethod
-    def index_generator(sample_size: 'array', n_index=1):
+    def index_generator(sample_size: 'array', n_index=1, random_state=1):
         """Randomly generate n indexes.
         :Return: random_indexes"""
 
         import random
 
-        def select_from_array(sample_array, n_select=1):
-            return random.choices(population=sample_array, k=n_select)
-
+        def select_from_array(sample_array, n_select=1, random_state=1):
+            np.random.seed(random_state)
+            return random.choices(population=sample_array, k=n_select, random_state=random_state)
+        
         indexes = range(0, sample_size, 1)
 
-        return select_from_array(indexes, n_index)
+        return select_from_array(indexes, n_index, random_state)
         
+    @staticmethod
+    def compute_pvalue(x1, x2, h1, seed):
+        """compute test_statistic and pvalue of null hypothesis.
+        h1: {'greater', 'less', 'two-sided'}
+        Returns:
+        statistic : float or array
+            The calculated t-statistic.
+        pvalue : float or array
+            The two-tailed p-value."""
+    
+    #     print(help(stats.ttest_ind))
+        np.random.seed(seed)
+        rng = np.random.default_rng
+        
+        tstat, pval = np.round(stats.ttest_ind(x1, x2, equal_var=False, alternative=h1, random_state=rng), 4)
+        return tstat, pval
+        
+    @staticmethod
+    def compute_stat_pval(x1, x2, h1='greater',  X1_name='X1', X2_name='X2', deg_freedom=1, seed=1):
+        """report statistical significance using pvalue"""
+    
+        
+        def get_min_denom(n1, n2):
+                return min([n1, n2])
+            
+        def detect_unequal_sizes(n1, n2):
+            """check if both lengths are not the same"""
+            return n1 != n2
+        
+        cls = DsUtils()
+
+        np.random.seed(seed)
+        X1_size, X2_size = len(x1), len(x2)
+        samp_sizes = {X1_name: pd.Series(x1),
+                      X2_name: pd.Series(x2)}
+        print(f'ORIGINAL SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
+              f'{X2_name}: {X2_size}\n\n')
+
+        # check if sample sizes are unequal
+        if detect_unequal_sizes(X1_size, X2_size):
+            print("Unequal Sample Sizes Detected!!")
+            min_size = get_min_denom(X1_size, X2_size)
+            max_samp_name = [name for name, val in samp_sizes.items() if len(val) != min_size][0]
+            # downsampling: 
+            # randomly generate min_size indexes for max_samp_name
+            rand_indexes = cls.index_generator(len(samp_sizes[max_samp_name]), min_size)
+            # select only random min_size indexes for max_samp_name set
+            samp_sizes[max_samp_name] = samp_sizes[max_samp_name].iloc[rand_indexes]
+            X1_size, X2_size = len(samp_sizes[X1_name]), len(samp_sizes[X2_name])
+            print(f'ADJUSTED SAMPLE SIZE: \n{X1_name}: {X1_size}\n' +
+                  f'{X2_name}: {X2_size}\n\n')
+            
+        total_X1, X1_mean, X1_std = cls.compute_mean_std(samp_sizes[X1_name], X1_size, deg_freedom)
+        total_X2, X2_mean, X2_std = cls.compute_mean_std(samp_sizes[X2_name], X2_size, deg_freedom)
+
+        null_hypo = np.round(X1_mean - X2_mean, 4)
+        pooled_std = cls.compute_pstd(X1_std, X2_std)
+
+        print(f'{X1_name}:\n Total = {total_X1}\n Average = {X1_mean}\n Standard deviation = {X1_std}\n\n' +
+              f'{X2_name}:\n Total = {total_X2}\n Average = {X2_mean}\n Standard deviation = {X2_std}\n\n' +
+              f'MEAN DIFFERENCE = {null_hypo}\n' +
+              f'POOLED STD = {pooled_std}\n\n')
+        
+        tstat, pval = cls.compute_pvalue(samp_sizes[X1_name], samp_sizes[X2_name], h1, seed)
+        test_result = (['99%', 0.01], 
+                       ['95%', 0.05])
+        if pval <= test_result[0][1]:
+            return print(f'At {test_result[0][0]}, REJECT the null hypothesis!\n {pval} is less than {test_result[0][1]}\n')
+        elif pval <= test_result[1][1]:
+                return print(f'At {test_result[1][0]}, REJECT the null hypothesis!\n{pval} is less than or equal to {test_result[1][1]}\n')
+        print(f'Do NOT reject the null hypothesis\n{pval} is greater than {test_result[1][1]}')
+    
     @staticmethod
     def K_search(X, k_max=3):
         """SSD is the sum of squared distance of 
@@ -202,7 +1090,7 @@ class DsUtils:
         return pd.DataFrame(result)
         
     @staticmethod
-    def get_correlations(df: pd.DataFrame, y_col: 'str or Series', x_colnames: list=None):
+    def get_correlations(df: pd.DataFrame, y_col: 'str or Series'=None, x_colnames: list=None, precision=2):
         """get %correlations between df features and y_col.
         And return ABSOLUTE values of correlations.
         Return: xy_corrwith (sorted absolute values)"""
@@ -222,9 +1110,19 @@ class DsUtils:
             x = pd.DataFrame(df[x_colnames])
         else:
             x = df
+        if not y_col:
+            return x.corr().apply(lambda col: round(100*col, precision))
+        return x.corrwith(y_col).abs().sort_values(ascending=False).apply(lambda x: 100*x).round(precision)
+
+    @staticmethod
+    def corr_with_pearson(X, y, include_direction=False, scale_up=100, precision=2, top_n=None):
+        """compute Pearson correlation for outcome y with X variables"""
         
-        return x.corrwith(y_col).abs().sort_values(ascending=False).apply(lambda x: 100*x).round(2)
-        
+        X, y = pd.DataFrame(X), pd.Series(y)
+        if include_direction:
+            return np.round(scale_up * X.corrwith(y), precision).sort_values(ascending=False).iloc[:top_n]
+        return np.round(scale_up * X.corrwith(y).abs(), precision).sort_values(ascending=False).iloc[:top_n]
+    
     @staticmethod
     def corr_with_kbest(X, y):
         """using sklearn.preprocessing.SelectKBest, quantify correlations
@@ -232,7 +1130,7 @@ class DsUtils:
         Return: correlation series"""
         
         X = pd.DataFrame(X)
-        selector = sfs.SelectKBest(k='all').fit(X, y)
+        selector = s_fs.SelectKBest(k='all').fit(X, y)
         return pd.Series(selector.scores_, index=selector.feature_names_in_).sort_values(ascending=False)
 
     @staticmethod
@@ -247,20 +1145,39 @@ class DsUtils:
         
         return (later_date - historic_date).astype(int)
         
+        
     @staticmethod
-    def split_time_series(time_col, sep=':'):
+    def split_time_series(time_col: 'datetime series', sep=':'):
         """split series containing time data in str format into
         dataframe of three columns (hour, minute, seconds)
         Return:
         Dataframe"""
         
-        hr = time_col.astype(np.datetime64).dt.hour
-        minute = time_col.astype(np.datetime64).dt.minute
-        secs = time_col.astype(np.datetime64).dt.second
-        
+        time_col = time_col.astype(np.datetime64)
+        hr, minute, secs = time_col.dt.hour, time_col.dt.minute, time_col.dt.second
         return pd.DataFrame({'Hour': hr,
                             'Minute': minute,
                             'Seconds': secs})
+    @staticmethod
+    def split_date_series(date_col, sep='/', year_first=True):
+        """split series containing date data in str format into
+        dataframe of tdayee columns (year, month, day)
+        Return:
+        Dataframe"""
+        
+        date_col = date_col.str.split(sep, expand=True)
+        if year_first:
+            day = date_col[2]
+            mon = date_col[1]
+            yr = date_col[0]
+        else:
+            day = date_col[0]
+            mon = date_col[1]
+            yr = date_col[2]
+        
+        return pd.DataFrame({'Year': yr,
+                            'Month': mon,
+                            'Day': day})
         
     @staticmethod
     def cast_appropriate_dtypes(df):
@@ -520,7 +1437,7 @@ class DsUtils:
         return ax1
         
     @staticmethod
-    def visualize_binaryclf_report(trained_model, test_input, test_label, is_ANN=False, ANN_cutoff=0.5):
+    def visualize_report_binclf(trained_model, test_input, test_label, is_ANN=False, ANN_cutoff=0.5):
         """performance report for trained model"""
         
         test_pred = trained_model.predict(test_input)
@@ -590,12 +1507,23 @@ class DsUtils:
         return ser.apply(func=lambda val: to_binary(val))
 
     @staticmethod
-    def convert_month(val: str, to_words: str = False):
+    def get_month(val: str, in_words: str = False):
         """change datatype of month from words to integer (vice versa)
         """
-
+        
+        if not isinstance(val, (int, str)):
+            raise TypeError('val must be int or str')
+        
+        if isinstance(val, int):
+            if (0 > val) or (val > 12):
+                raise ValueError('val must be between 1 and 12')
+        
         guide = {'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6,
                  'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12}
+        
+        if isinstance(val, str):
+            if val.capitalize() not in guide.keys():
+                raise ValueError('val is wrongly spelt')
 
         def convert_to_words(val):
             return dict([(v, k) for k, v in guide.items()])[val]
@@ -605,32 +1533,31 @@ class DsUtils:
                 if val.lower() in k.lower():
                     return v
 
-        if to_words:
+        if in_words:
             return convert_to_words(val)
         return convert_to_int(val)
 
     @staticmethod
-    def impute_null_values(df: 'pd.DataFrame', pivot_cols: list, target_col: str, with_mean=True):
-        """
-        Impute the null values in a target feature using aggregated values
+    def impute_null_values(df: 'pd.DataFrame', pivot_cols: list, target_col: str, stat_used: str='mean'):
+        """Impute the null values in a target feature using aggregated values
         (eg mean, median, mode) based on pivot features
         :param df:
         :param pivot_cols:
         :param target_col:
-        :param with_mean:
-        :return: impute_guide: 'a pandas dataframe'
-        """
+        :param stat_used: {'mean', 'mode', 'median'}
+        :return: impute_guide: 'a pandas dataframe'"""
         
-        cls = DS_utils()
+        cls = DsUtils()
         
         if ('object' in str(df[target_col].dtypes)) or ('bool' in str(df[target_col].dtypes)):
-            with_mean = False
+            stat_used = 'mode'
 
-        if with_mean:
+        if str.lower(stat_used) == 'mean':
             impute_guide = cls.pivot_mean(df, pivot_cols, target_col)
-        else:
+        elif str.lower(stat_used) == 'mode':
             impute_guide = cls.pivot_mode(df, pivot_cols, target_col)
-
+        elif str.lower(stat_used) == 'median':
+            impute_guide = cls.pivot_median(df, pivot_cols, target_col)
         # fill null values with means
         null_ind = df.loc[df[target_col].isnull()].index
 
@@ -650,9 +1577,10 @@ class DsUtils:
     @staticmethod
     def pivot_mode(df: 'pd.DataFrame', pivot_cols: list, target_col: str):
         """rank the occurrences of target_col values based on pivot_cols,
-        and return only the mode (i.e highest occurring) target_col
+        and return the mode (i.e the highest occurring) target_col
         value per combination of pivot_cols.
-        """
+        Return:
+        impute_guide: lookup table"""
         
         if not isinstance(df, pd.DataFrame):
             raise TypeError("Object given is not a pandas dataframe")
@@ -667,9 +1595,10 @@ class DsUtils:
     @staticmethod
     def pivot_mean(df: 'pd.DataFrame', pivot_cols: list, target_col: str):
         """rank the occurrences of target_col values based on pivot_cols,
-        and return only the highest occurring target_col value per combination
+        and return the average target_col value per combination
         of pivot_cols.
-        """
+        Return:
+        impute_guide: lookup table"""
         
         if not isinstance(df, pd.DataFrame):
             raise TypeError("Object given is not a pandas dataframe")
@@ -692,9 +1621,39 @@ class DsUtils:
         
         freq_df = np.round(df.loc[df[target_col].notnull(), pivot_cols + [target_col]].groupby(by=pivot_cols).mean().reset_index(), dec_places)
         return freq_df.drop_duplicates(subset=pivot_cols)
+        
+    @staticmethod
+    def pivot_median(df: 'pd.DataFrame', pivot_cols: list, target_col: str):
+        """rank the occurrences of target_col values based on pivot_cols,
+        and return the median target_col value per combination
+        of pivot_cols.
+        Return:
+        impute_guide: lookup table"""
+        
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("Object given is not a pandas dataframe")
+        if not isinstance(pivot_cols, list):
+            raise TypeError("pivot columns should be in list")
+        if not isinstance(target_col, str):
+            raise TypeError("Target column name must be a string")
+        
+        dec_places = 4
+        targ_dtype = str(df[target_col].dtypes)
+        
+        if ('int' in targ_dtype):
+            dec_places = 0
+            targ_dtype = str(df[target_col].dtypes)[:-2]
+            
+        elif ('float' in targ_dtype):    
+            sample = str(df.loc[df[target_col].notnull(), target_col].iloc[0])
+            dec_places = len(sample.split('.')[-1])
+            targ_dtype = str(df[target_col].dtypes)[:-2]
+        
+        freq_df = np.round(df.loc[df[target_col].notnull(), pivot_cols + [target_col]].groupby(by=pivot_cols).median().reset_index(), dec_places)
+        return freq_df.drop_duplicates(subset=pivot_cols)
 
     @staticmethod
-    def dataset_split(x_array: 'np.ndarray', y_array: 'np.ndarray', perc_test, perc_val=0):
+    def dataset_split(x_array: 'np.ndarray', y_array: 'np.ndarray', perc_test=0.25, perc_val=None):
         """create train, validation, test sets from x and y dataframes
         Returns:
         if  val_len != 0:  # perc_val is not 0
@@ -702,18 +1661,22 @@ class DsUtils:
         else:  # perc_val is 0 (no validation set)
             (x_train, x_test, y_train, y_test)"""
 
-        if not (isinstance(x_array, np.ndarray) and isinstance(y_array, np.ndarray)):
+        if not (isinstance(x_array, np.ndarray) or not isinstance(y_array, np.ndarray)):
             raise TypeError("x_array/y_array is not np.ndarray")
 
         nx, ny = len(x_array), len(y_array)
 
         if nx != ny:
             raise ValueError("x_array and y_array have unequal number of samples")
+            
+        if perc_val is None:
+            perc_val = 0
 
         # number of samples for each set
-        test_len = int(nx * perc_test)
-        val_len = int(nx * perc_val)
-        train_len = int(nx - sum([val_len, test_len]))
+        combo_len = int(nx * perc_test)
+        train_len = int(nx - combo_len)
+        val_len = int(combo_len * perc_val)
+        test_len = combo_len - val_len
 
         print(f"Training: {train_len} samples")
         print(f"Validation: {val_len} samples")
@@ -728,29 +1691,17 @@ class DsUtils:
         np.random.shuffle(inds)
 
         # random indexes of test, val and training sets
-        test_ind = inds[:test_len]
-        val_ind = inds[test_len: test_len + val_len]
-        train_ind = inds[test_len + val_len:]
-
+        train_ind = inds[: train_len]
+        combo_ind = inds[train_len:]
+        
+        test_ind = combo_ind[: test_len]
+        val_ind = combo_ind[test_len: ]
+            
         x_test, y_test = x_array[test_ind], y_array[test_ind]
         x_val, y_val = x_array[val_ind], y_array[val_ind]
         x_train, y_train = x_array[train_ind], y_array[train_ind]
 
         return (x_train, x_val, x_test, y_train, y_val, y_test) if val_len else (x_train, x_test, y_train, y_test)
-
-    @staticmethod
-    def nn_weights_biases(model_instance: 'Keras_model'):
-        """
-        get weights and biases of a neural network
-        :param model_instance: 
-        :return: weights, biases
-        """
-        print("Weights and biases are given below:\n"+
-              f"{model_instance.weights}")
-        params = model_instance.get_weights()
-        weights = [params[i] for i in range(len(params)) if i % 2 == 0]
-        biases = [params[i] for i in range(len(params)) if i % 2 != 0]
-        return weights, biases
 
     @staticmethod
     def classify_age(row):
@@ -790,24 +1741,24 @@ class DsUtils:
 
     @staticmethod
     def null_checker(df: pd.DataFrame, in_perc: bool=False, only_nulls=False):
-            """return quantity of missing data per dataframe column."""
+        """return quantity of missing data per dataframe column."""
+        
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("Argument you pass as df is not a pandas dataframe")
             
-            if not isinstance(df, pd.DataFrame):
-                raise TypeError("Argument you pass as df is not a pandas dataframe")
-                
-            null_df = df.isnull().sum()
-                
-            if in_perc:
-                null_df = (null_df*100)/len(df)
-                if len(null_df):
-                    print("Result given in percentage")
+        null_df = df.isnull().sum()
             
-            if only_nulls:
-                null_df = null_df.loc[null_df > 0]
-                if len(null_df):
-                    print("Only columns with null values are shown below:")
-                
-            return np.round(null_df, 2)
+        if in_perc:
+            null_df = (null_df*100)/len(df)
+            if len(null_df):
+                print("Result given in percentage")
+        
+        if only_nulls:
+            null_df = null_df.loc[null_df > 0]
+            if len(null_df):
+                print("Only columns with null values are shown below:")
+            
+        return np.round(null_df, 2)
             
     @staticmethod
     def check_for_empty_str(df: sns.categorical.pd.DataFrame):
@@ -840,13 +1791,23 @@ class DsUtils:
 
     @staticmethod
     def unique_categs(df: sns.categorical.pd.DataFrame):
-        """return unique values per dataframe column."""
+        """return unique values per dataframe column.
+        Return:
+        unique_vals_per_col: dictionary containing each column name and unique values."""
 
         cols = tuple(df.columns)
         uniq_vals = dict()
         for i in range(len(cols)):
             uniq_vals[cols[i]] = list(df[cols[i]].unique())
         return uniq_vals
+        
+    @staticmethod
+    def make_cols_lowercase(df):
+        """convert column names to lowercase.
+        Return: 
+        col_list: list of df columns in lowercase."""
+        
+        return list(map(str.lower, list(df.columns)))
 
     @staticmethod
     def train_test_RMSE(deg_lim: int, X: 'array-like', y: 'array-like'):
@@ -889,23 +1850,6 @@ class DsUtils:
         return train_rmse, test_rmse
 
     @staticmethod
-    def ds_modules_importer():
-        '''
-        import the following data science modules:
-        pandas as pd, numpy as np, seaborn as sns
-        matplotlib.pyplot as plt
-        :return pd, np, plt, sns, train_test_split, PolynomialFeatures, StandardScaler, SCORERS, mean_absolute_error, mean_squared_error
-        '''
-
-        from sklearn.model_selection import train_test_split
-        from sklearn.preprocessing import PolynomialFeatures, StandardScaler
-        from sklearn.metrics import SCORERS, mean_absolute_error, mean_squared_error
-
-        print('\n\nData Science Modules imported!\n'
-              'numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns\n')
-        return pd, np, plt, sns, train_test_split, PolynomialFeatures, StandardScaler, SCORERS, mean_absolute_error, mean_squared_error
-
-    @staticmethod
     def percentage_missing_data(df: 'DataFrame or Series', in_percentage: 'bool'=True, draw_graph: 'bool'=False):
         """
         Return missing data per column (in percentage, if True)
@@ -946,7 +1890,7 @@ class DsUtils:
 
         #  save graph as image
         graph_folder = f'{os.getcwd()}\\DisplayGraphs'
-        joblib.os.makedirs(graph_folder, exist_ok=True)  # folder created
+        os.makedirs(graph_folder, exist_ok=True)  # folder created
         graph_file = f'{graph_folder}\\plot1.png'
         fig.savefig(fname=graph_file, pad_inches=0.25,
                     dpi=200, bbox_inches='tight')
